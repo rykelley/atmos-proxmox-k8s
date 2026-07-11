@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-service
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ft.labels" (dict "name" "catalog-service" "component" "backend" "root" $) | nindent 4 }}
+spec:
+  replicas: {{ .Values.catalog.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ft.selectorLabels" (dict "name" "catalog-service") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ft.labels" (dict "name" "catalog-service" "component" "backend" "root" $) | nindent 8 }}
+    spec:
+      {{- with .Values.image.pullSecret }}
+      imagePullSecrets:
+        - name: {{ . }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: catalog-service
+          image: {{ include "ft.image" (dict "image" "filament-catalog" "root" $) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.catalog.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.catalog.port | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.db.secretName }}
+                  key: {{ .Values.db.secretKey }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.catalog.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.catalog.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog-service
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ft.labels" (dict "name" "catalog-service" "component" "backend" "root" $) | nindent 4 }}
+spec:
+  selector:
+    {{- include "ft.selectorLabels" (dict "name" "catalog-service") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.catalog.port }}
+      targetPort: {{ .Values.catalog.port }}

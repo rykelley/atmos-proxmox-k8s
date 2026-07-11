@@ -14,6 +14,18 @@ releases:
     wait: true
     waitForJobs: true
     timeout: 600
+    {{- if .Values.enable_gateway_api | default true }}
+    # Gateway API CRDs must exist before the cilium agent enables the Gateway
+    # API feature. Applied idempotently before each cilium sync.
+    hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: kubectl
+        args:
+          - apply
+          - -f
+          - {{ .Values.gateway_api_crds_url | default "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml" | quote }}
+    {{- end }}
     values:
       - kubeProxyReplacement: true
         k8sServiceHost: {{ .Values.control_plane_vip | default "10.10.1.30" | quote }}
@@ -54,3 +66,18 @@ releases:
             enabled: true
           ui:
             enabled: true
+
+        # --- Gateway API (north-south ingress for the filament app) ---
+        gatewayAPI:
+          enabled: {{ .Values.enable_gateway_api | default true }}
+
+        # --- L2 LoadBalancer for bare-metal (no servicelb) ---
+        # LB IPs are allocated by CiliumLoadBalancerIPPool and advertised via
+        # CiliumL2AnnouncementPolicy (both shipped with the filament-app chart).
+        l2announcements:
+          enabled: {{ .Values.enable_l2_announcements | default true }}
+        externalIPs:
+          enabled: true
+        k8sClientRateLimit:
+          qps: {{ .Values.k8s_client_qps | default 15 }}
+          burst: {{ .Values.k8s_client_burst | default 20 }}

@@ -1,0 +1,122 @@
+{{- $ns := .Values.targetNamespace -}}
+{{- $action := .Values.validationAction -}}
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: filament-require-image-tag
+  annotations:
+    policies.kyverno.io/title: Require pinned image tags
+    policies.kyverno.io/category: Supply Chain
+spec:
+  validationFailureAction: {{ $action }}
+  background: true
+  rules:
+    - name: require-explicit-tag
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              namespaces: ["{{ $ns }}"]
+      validate:
+        message: "An explicit image tag is required."
+        pattern:
+          spec:
+            containers:
+              - image: "*:*"
+    - name: disallow-latest-tag
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              namespaces: ["{{ $ns }}"]
+      validate:
+        message: "Using a mutable ':latest' image tag is not allowed."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: filament-require-requests-limits
+  annotations:
+    policies.kyverno.io/title: Require resource requests and limits
+    policies.kyverno.io/category: Resource Management
+spec:
+  validationFailureAction: {{ $action }}
+  background: true
+  rules:
+    - name: require-requests-limits
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              namespaces: ["{{ $ns }}"]
+      validate:
+        message: "CPU/memory requests and limits are required for every container."
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  requests:
+                    memory: "?*"
+                    cpu: "?*"
+                  limits:
+                    memory: "?*"
+                    cpu: "?*"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: filament-require-nonroot
+  annotations:
+    policies.kyverno.io/title: Require non-root, hardened containers
+    policies.kyverno.io/category: Pod Security
+spec:
+  validationFailureAction: {{ $action }}
+  background: true
+  rules:
+    - name: require-run-as-nonroot
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              namespaces: ["{{ $ns }}"]
+      validate:
+        message: "Pods must run as non-root with privilege escalation disabled and all capabilities dropped."
+        pattern:
+          spec:
+            securityContext:
+              runAsNonRoot: true
+            containers:
+              - securityContext:
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities:
+                    drop:
+                      - ALL
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: filament-require-labels
+  annotations:
+    policies.kyverno.io/title: Require standard app labels
+    policies.kyverno.io/category: Best Practices
+spec:
+  validationFailureAction: {{ $action }}
+  background: true
+  rules:
+    - name: require-app-name-label
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              namespaces: ["{{ $ns }}"]
+      validate:
+        message: "The label app.kubernetes.io/name is required."
+        pattern:
+          metadata:
+            labels:
+              app.kubernetes.io/name: "?*"

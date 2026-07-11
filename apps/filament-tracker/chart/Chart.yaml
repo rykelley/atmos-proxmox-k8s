@@ -1,0 +1,6 @@
+apiVersion: v2
+name: filament-tracker
+description: 3D-printing filament tracker (Next.js + Fastify microservices) with Cilium Gateway API, L2 LoadBalancer, and network policies.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

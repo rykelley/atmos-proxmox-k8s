@@ -24,17 +24,30 @@ workflows:
         # `helmfile apply` diffs all releases before installing, so without this
         # the kyverno-policies diff fails with "no matches for kind ClusterPolicy".
         command: helmfile apply kyverno -s prod -- --skip-diff-on-install
+      - name: deploy-filament-app
+        # Requires the `filament` namespace and `filament-db` Secret to exist
+        # (see README). --skip-diff-on-install avoids diffing Cilium/Gateway CRs
+        # whose CRDs were installed by earlier steps.
+        command: helmfile apply filament-app -s prod -- --skip-diff-on-install
 
   destroy-cluster:
     description: "Tear down the cluster in reverse order (removes the VMs)."
     steps:
+      - name: destroy-filament-app
+        command: helmfile destroy filament-app -s prod
+        # Best-effort: the cluster may already be gone.
       - name: destroy-kyverno
         command: helmfile destroy kyverno -s prod
-        # Best-effort: the cluster may already be gone.
       - name: destroy-cilium
         command: helmfile destroy cilium -s prod
       - name: destroy-vms
         command: terraform destroy proxmox-vms -s prod -auto-approve
+
+  deploy-app:
+    description: "Deploy/redeploy just the filament tracker app (namespace + filament-db secret must exist)."
+    steps:
+      - name: deploy-filament-app
+        command: helmfile apply filament-app -s prod -- --skip-diff-on-install
 
   plan-vms:
     description: "Plan the Proxmox VM changes only."

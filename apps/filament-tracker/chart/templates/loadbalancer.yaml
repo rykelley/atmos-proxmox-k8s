@@ -1,0 +1,32 @@
+# Cilium LoadBalancer IPAM + L2 announcement for the Gateway's LB Service.
+# These are cluster-scoped Cilium CRDs; the serviceSelector targets only the
+# Services that Cilium creates for Gateways (labeled io.cilium.gateway/owning-gateway).
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: {{ .Values.loadBalancer.poolName }}
+  labels:
+    {{- include "ft.labels" (dict "name" "filament-lb-pool" "component" "networking" "root" $) | nindent 4 }}
+spec:
+  blocks:
+    - start: {{ .Values.loadBalancer.start | quote }}
+      stop: {{ .Values.loadBalancer.stop | quote }}
+  serviceSelector:
+    matchExpressions:
+      - key: io.cilium.gateway/owning-gateway
+        operator: Exists
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: {{ .Values.loadBalancer.poolName }}
+  labels:
+    {{- include "ft.labels" (dict "name" "filament-l2-announce" "component" "networking" "root" $) | nindent 4 }}
+spec:
+  serviceSelector:
+    matchExpressions:
+      - key: io.cilium.gateway/owning-gateway
+        operator: Exists
+  interfaces:
+    - {{ printf "^%s$" .Values.loadBalancer.interface | quote }}
+  loadBalancerIPs: true

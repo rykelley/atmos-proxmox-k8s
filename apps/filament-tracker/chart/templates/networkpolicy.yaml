@@ -1,0 +1,129 @@
+{{- if .Values.networkPolicy.enabled }}
+# Zero-trust posture for the filament namespace. Selecting an endpoint in a
+# direction flips it to default-deny for that direction, so these allow-lists
+# are the only permitted flows. Hubble visualizes anything that gets dropped.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: web
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ft.labels" (dict "name" "web-netpol" "component" "networking" "root" $) | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: web
+  ingress:
+    # Traffic proxied in from the Cilium Gateway, plus kubelet health probes.
+    - fromEntities:
+        - ingress
+        - host
+        - remote-node
+        - cluster
+      toPorts:
+        - ports:
+            - port: "{{ .Values.web.port }}"
+              protocol: TCP
+  egress:
+    # DNS resolution.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    # Only the two backend microservices.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: catalog-service
+        - matchLabels:
+            app.kubernetes.io/name: inventory-service
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: catalog-service
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ft.labels" (dict "name" "catalog-netpol" "component" "networking" "root" $) | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: catalog-service
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: web
+      toPorts:
+        - ports:
+            - port: "{{ .Values.catalog.port }}"
+              protocol: TCP
+    # kubelet health probes.
+    - fromEntities:
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "{{ .Values.catalog.port }}"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    # Supabase Postgres (external).
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "{{ .Values.networkPolicy.supabasePort }}"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: inventory-service
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ft.labels" (dict "name" "inventory-netpol" "component" "networking" "root" $) | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: inventory-service
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: web
+      toPorts:
+        - ports:
+            - port: "{{ .Values.inventory.port }}"
+              protocol: TCP
+    - fromEntities:
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "{{ .Values.inventory.port }}"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "{{ .Values.networkPolicy.supabasePort }}"
+              protocol: TCP
+{{- end }}

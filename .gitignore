@@ -34,6 +34,16 @@ kubeconfig*
 !.env.example
 secrets.yaml
 *-secrets.yaml
+# Raw Supabase/DB secret manifests (contain real credentials)
+apps/filament-tracker/db-deployment/
+
+# Node / app build artifacts (apps/filament-tracker)
+node_modules/
+.next/
+apps/**/dist/
+apps/**/drizzle/
+*.tsbuildinfo
+npm-debug.log*
 
 # Editor / OS
 .DS_Store

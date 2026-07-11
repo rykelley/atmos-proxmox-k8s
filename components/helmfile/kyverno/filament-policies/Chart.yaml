@@ -1,0 +1,6 @@
+apiVersion: v2
+name: filament-policies
+description: Custom Kyverno ClusterPolicies enforcing security baselines on the filament namespace.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

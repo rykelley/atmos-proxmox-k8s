@@ -92,6 +92,12 @@ components:
         control_plane_vip: "10.10.1.30"
         api_port: 6443
         pod_cidr: "10.42.0.0/16"
+        # North-south ingress + bare-metal LoadBalancer for the filament app.
+        enable_gateway_api: true
+        enable_l2_announcements: true
+        k8s_client_qps: 15
+        k8s_client_burst: 20
+        gateway_api_crds_url: "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml"
 
     kyverno:
       metadata:
@@ -107,3 +113,39 @@ components:
         kyverno_policies_chart_version: "3.3.4"
         kyverno_replicas: 3
         kyverno_validation_action: "Audit"
+        # Custom policies enforced on the filament application namespace.
+        filament_namespace: "filament"
+        filament_validation_action: "Enforce"
+
+    filament-app:
+      metadata:
+        component: filament-app
+      settings:
+        depends_on:
+          1:
+            component: kyverno
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
+      vars:
+        filament_namespace: "filament"
+        # --- Images (GHCR). Set image_owner to your GitHub org/user and pin
+        # image_tag to a built git SHA (the CI workflow pushes both sha + latest). ---
+        image_registry: "ghcr.io"
+        image_owner: "rykelley"
+        image_tag: "v1.0.0"
+        # Name of a pre-created dockerconfigjson secret; leave empty if public.
+        image_pull_secret: "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"
+        # --- Database secret (create out-of-band, see README) ---
+        db_secret_name: "filament-db"
+        db_secret_key: "DATABASE_URL"
+        # --- Cilium Gateway L2 LoadBalancer ---
+        gateway_hostname: ""
+        gateway_lb_ip: "10.10.1.240"
+        gateway_lb_start: "10.10.1.240"
+        gateway_lb_stop: "10.10.1.250"
+        gateway_interface: "eth0"
+        # --- Network policy ---
+        network_policy_enabled: true
+        # 5432 = Supabase direct connection (matches the db-deployment secret).
+        # Use 6543 if you switch DATABASE_URL to the connection pooler.
+        supabase_port: 5432

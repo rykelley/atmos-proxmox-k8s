@@ -1,0 +1,4 @@
+# Namespace these policies apply to.
+targetNamespace: filament
+# Enforce = block non-compliant admissions. Audit = report only.
+validationAction: Enforce

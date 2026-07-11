@@ -38,3 +38,16 @@ releases:
       # existing workloads; switch to "Enforce" once violations are clean.
       - validationFailureAction: {{ .Values.kyverno_validation_action | default "Audit" | quote }}
         podSecurityStandard: baseline
+
+  # Custom policies enforcing pinned tags, resource limits, non-root, and
+  # standard labels on the filament application namespace.
+  - name: filament-policies
+    namespace: kyverno
+    chart: ./filament-policies
+    needs:
+      - kyverno/kyverno
+    wait: true
+    timeout: 300
+    values:
+      - targetNamespace: {{ .Values.filament_namespace | default "filament" | quote }}
+        validationAction: {{ .Values.filament_validation_action | default "Enforce" | quote }}

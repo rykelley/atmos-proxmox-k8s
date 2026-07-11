@@ -1,0 +1,39 @@
+# Filament tracker application: Next.js frontend + two Fastify microservices,
+# exposed via Cilium Gateway API with an L2-announced LoadBalancer IP and
+# locked down with CiliumNetworkPolicies. Atmos passes stack `vars` as
+# Helmfile state values (.Values.*) and sets KUBECONFIG via the component env.
+#
+# Prerequisite: the target namespace and the `filament-db` Secret (containing
+# DATABASE_URL for Supabase) must already exist. See the README.
+
+releases:
+  - name: filament-app
+    namespace: {{ .Values.filament_namespace | default "filament" }}
+    chart: ../../../apps/filament-tracker/chart
+    createNamespace: false
+    wait: true
+    timeout: 600
+    values:
+      - namespace: {{ .Values.filament_namespace | default "filament" | quote }}
+        image:
+          registry: {{ .Values.image_registry | default "ghcr.io" | quote }}
+          owner: {{ .Values.image_owner | default "your-github-owner" | quote }}
+          tag: {{ .Values.image_tag | default "latest" | quote }}
+          pullPolicy: IfNotPresent
+          pullSecret: {{ .Values.image_pull_secret | default "" | quote }}
+        db:
+          secretName: {{ .Values.db_secret_name | default "filament-db" | quote }}
+          secretKey: {{ .Values.db_secret_key | default "DATABASE_URL" | quote }}
+        gateway:
+          name: filament
+          className: cilium
+          hostname: {{ .Values.gateway_hostname | default "" | quote }}
+        loadBalancer:
+          poolName: filament-gateway-pool
+          start: {{ .Values.gateway_lb_start | default "10.10.1.240" | quote }}
+          stop: {{ .Values.gateway_lb_stop | default "10.10.1.250" | quote }}
+          ip: {{ .Values.gateway_lb_ip | default "10.10.1.240" | quote }}
+          interface: {{ .Values.gateway_interface | default "eth0" | quote }}
+        networkPolicy:
+          enabled: {{ .Values.network_policy_enabled | default true }}
+          supabasePort: {{ .Values.supabase_port | default 6543 }}

@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-service
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ft.labels" (dict "name" "inventory-service" "component" "backend" "root" $) | nindent 4 }}
+spec:
+  replicas: {{ .Values.inventory.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ft.selectorLabels" (dict "name" "inventory-service") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ft.labels" (dict "name" "inventory-service" "component" "backend" "root" $) | nindent 8 }}
+    spec:
+      {{- with .Values.image.pullSecret }}
+      imagePullSecrets:
+        - name: {{ . }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: inventory-service
+          image: {{ include "ft.image" (dict "image" "filament-inventory" "root" $) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.inventory.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.inventory.port | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.db.secretName }}
+                  key: {{ .Values.db.secretKey }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.inventory.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.inventory.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-service
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ft.labels" (dict "name" "inventory-service" "component" "backend" "root" $) | nindent 4 }}
+spec:
+  selector:
+    {{- include "ft.selectorLabels" (dict "name" "inventory-service") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.inventory.port }}
+      targetPort: {{ .Values.inventory.port }}

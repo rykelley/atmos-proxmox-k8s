@@ -1,0 +1,60 @@
+# Namespace must already exist (created out-of-band together with the DB secret).
+namespace: filament
+
+image:
+  registry: ghcr.io
+  # Set to your GitHub owner/org. Overridden per-stack in Atmos.
+  owner: your-github-owner
+  # Pinned to a git SHA in CI/stack. `latest` is only a convenience default.
+  tag: latest
+  pullPolicy: IfNotPresent
+  # Name of a pre-created dockerconfigjson secret for private GHCR images.
+  # Leave empty if the packages are public.
+  pullSecret: ""
+
+# Supabase Postgres connection, referenced (never inlined) from a Secret.
+db:
+  secretName: filament-db
+  secretKey: DATABASE_URL
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    cpu: "500m"
+    memory: 256Mi
+
+catalog:
+  replicas: 1
+  port: 8080
+
+inventory:
+  replicas: 1
+  port: 8080
+
+web:
+  replicas: 2
+  port: 3000
+
+gateway:
+  name: filament
+  className: cilium
+  # Optional hostname match. Empty = match all Host headers.
+  hostname: ""
+
+loadBalancer:
+  poolName: filament-gateway-pool
+  # Range carved out of the node network (10.10.1.0/24), clear of the VIP (.30)
+  # and node IPs (.31-.36).
+  start: "10.10.1.240"
+  stop: "10.10.1.250"
+  # Requested IP for the Gateway service (must fall within the pool).
+  ip: "10.10.1.240"
+  # Interface Cilium announces the L2 IP on (matches kube_vip_interface).
+  interface: "eth0"
+
+networkPolicy:
+  enabled: true
+  # Supabase pooler port (6543 transaction / 5432 direct-or-session).
+  supabasePort: 6543
