@@ -132,9 +132,9 @@ components:
         # image_tag to a built git SHA (the CI workflow pushes both sha + latest). ---
         image_registry: "ghcr.io"
         image_owner: "rykelley"
-        # Immutable SHA tag from CI (docker/metadata-action type=sha,format=long).
-        # Kyverno's disallow-latest-tag policy blocks ":latest", so always pin.
-        image_tag: "sha-6a9793890a50a3243f55a27171264072bfca7734"
+        # Release tag pushed by CI (env.IMAGE_VERSION). Kyverno blocks ":latest",
+        # so we pin an explicit version.
+        image_tag: "v1.0.0"
         # NAME of a docker-registry Secret in the filament namespace (see below).
         # Leave "" if you make the GHCR packages public.
         image_pull_secret: "ghcr"
