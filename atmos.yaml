@@ -1,0 +1,51 @@
+# yaml-language-server: $schema=https://atmos.tools/schemas/atmos/atmos-manifest/1.0/atmos-manifest.json
+#
+# Atmos root configuration.
+# Registers Terraform/OpenTofu, Ansible, and Helmfile component types and the
+# stacks + workflows used to orchestrate the Proxmox k3s HA cluster.
+
+base_path: "."
+
+components:
+  terraform:
+    base_path: components/terraform
+    # Use OpenTofu. Change to "terraform" if you prefer the Terraform CLI.
+    command: tofu
+    apply_auto_approve: false
+    deploy_run_init: true
+    init_run_reconfigure: true
+    auto_generate_backend_file: false
+
+  ansible:
+    base_path: components/ansible
+    command: ansible
+
+  helmfile:
+    base_path: components/helmfile
+    use_eks: false
+
+stacks:
+  base_path: stacks
+  included_paths:
+    - "deploy/**/*"
+  excluded_paths:
+    - "**/_defaults.yaml"
+  name_pattern: "{stage}"
+
+workflows:
+  base_path: stacks/workflows
+
+logs:
+  file: "/dev/stderr"
+  level: Info
+
+settings:
+  list_merge_strategy: replace
+
+templates:
+  settings:
+    enabled: true
+    sprig:
+      enabled: true
+    gomplate:
+      enabled: true

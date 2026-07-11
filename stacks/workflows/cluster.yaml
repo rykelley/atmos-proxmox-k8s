@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=https://atmos.tools/schemas/atmos/atmos-manifest/1.0/atmos-manifest.json
+#
+# End-to-end orchestration workflows.
+# Run with:  atmos workflow deploy-cluster -f cluster
+
+workflows:
+  deploy-cluster:
+    description: "Provision VMs, install HA k3s + kube-vip, then deploy Cilium and Kyverno."
+    steps:
+      - name: provision-vms
+        command: terraform apply proxmox-vms -s prod -auto-approve
+      - name: wait-for-ssh
+        type: shell
+        command: |
+          echo "Waiting 60s for cloud-init / SSH on the new VMs..."
+          sleep 60
+      - name: install-k3s
+        command: ansible playbook k3s -s prod
+      - name: deploy-cilium
+        command: helmfile apply cilium -s prod
+      - name: deploy-kyverno
+        # --skip-diff-on-install: the kyverno-policies chart renders ClusterPolicy
+        # CRs whose CRDs are installed by the kyverno chart in the same apply.
+        # `helmfile apply` diffs all releases before installing, so without this
+        # the kyverno-policies diff fails with "no matches for kind ClusterPolicy".
+        command: helmfile apply kyverno -s prod -- --skip-diff-on-install
+
+  destroy-cluster:
+    description: "Tear down the cluster in reverse order (removes the VMs)."
+    steps:
+      - name: destroy-kyverno
+        command: helmfile destroy kyverno -s prod
+        # Best-effort: the cluster may already be gone.
+      - name: destroy-cilium
+        command: helmfile destroy cilium -s prod
+      - name: destroy-vms
+        command: terraform destroy proxmox-vms -s prod -auto-approve
+
+  plan-vms:
+    description: "Plan the Proxmox VM changes only."
+    steps:
+      - name: plan
+        command: terraform plan proxmox-vms -s prod

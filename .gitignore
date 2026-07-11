@@ -1,0 +1,42 @@
+# Terraform / OpenTofu
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+.terraform.lock.hcl
+
+# Atmos generated files
+**/*.planfile
+**/varfile
+**/*.terraform.tfvars.json
+
+# Ansible
+*.retry
+components/ansible/**/*.vault
+components/ansible/k3s/fetched/
+
+# Kubernetes / kubeconfig
+kubeconfig*
+*.kubeconfig
+
+# Secrets / env
+.env
+*.env
+!.env.example
+secrets.yaml
+*-secrets.yaml
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/

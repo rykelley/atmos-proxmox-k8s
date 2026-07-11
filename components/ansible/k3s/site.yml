@@ -1,0 +1,94 @@
+---
+# HA k3s install on Proxmox VMs.
+#
+# Order matters:
+#   1. Common OS prep on every node.
+#   2. Stage kube-vip manifest on control-plane nodes so the VIP comes up the
+#      moment the first API server is online (kube-vip runs hostNetwork, so it
+#      does NOT need a CNI to be present).
+#   3. Bootstrap the first server with --cluster-init.
+#   4. Join the remaining servers (serially) via the VIP.
+#   5. Join the agents via the VIP.
+#   6. Fetch a kubeconfig pointed at the VIP for use by Helmfile/kubectl.
+
+- name: Common OS preparation
+  hosts: k3s_cluster
+  become: true
+  roles:
+    - common
+
+- name: Stage kube-vip control-plane manifest
+  hosts: k3s_servers
+  become: true
+  roles:
+    - kube-vip
+
+- name: Bootstrap first k3s server (cluster-init)
+  hosts: k3s_servers[0]
+  become: true
+  roles:
+    - role: k3s-server
+      vars:
+        k3s_cluster_init: true
+
+- name: Join remaining k3s servers
+  hosts: k3s_servers[1:]
+  become: true
+  serial: 1
+  roles:
+    - role: k3s-server
+      vars:
+        k3s_cluster_init: false
+
+- name: Join k3s agents
+  hosts: k3s_agents
+  become: true
+  roles:
+    - k3s-agent
+
+- name: Fetch kubeconfig from the bootstrap server
+  hosts: k3s_servers[0]
+  become: true
+  tasks:
+    - name: Read remote kubeconfig
+      ansible.builtin.slurp:
+        src: /etc/rancher/k3s/k3s.yaml
+      register: _k3s_kubeconfig
+
+    - name: Compute kubeconfig content pointed at the VIP
+      delegate_to: localhost
+      become: false
+      ansible.builtin.set_fact:
+        _kubeconfig_content: >-
+          {{
+            (_k3s_kubeconfig.content | b64decode)
+            | regex_replace('https://127\.0\.0\.1:6443', 'https://' ~ control_plane_vip ~ ':' ~ (api_port | string))
+          }}
+
+    - name: Ensure local kubeconfig directories exist
+      delegate_to: localhost
+      become: false
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+      loop:
+        - "{{ lookup('env', 'HOME') }}/.kube"
+        - "{{ playbook_dir }}/{{ kubeconfig_fetch_dir }}"
+
+    - name: Write kubeconfig to the stable path used by Helmfile and a local copy
+      delegate_to: localhost
+      become: false
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        mode: "0600"
+        content: "{{ _kubeconfig_content }}"
+      loop:
+        - "{{ lookup('env', 'HOME') }}/.kube/atmos-k3s.yaml"
+        - "{{ playbook_dir }}/{{ kubeconfig_fetch_dir }}/kubeconfig"
+
+    - name: Report kubeconfig location
+      delegate_to: localhost
+      become: false
+      ansible.builtin.debug:
+        msg: "Kubeconfig written to ~/.kube/atmos-k3s.yaml (server https://{{ control_plane_vip }}:{{ api_port }})"

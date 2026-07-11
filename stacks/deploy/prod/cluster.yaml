@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=https://atmos.tools/schemas/atmos/atmos-manifest/1.0/atmos-manifest.json
+#
+# prod stack. Imports the catalog (the single source of truth) and instantiates
+# the four components for this environment. With name_pattern "{stage}" this
+# stack is addressed as `-s prod`.
+#
+# Override any catalog value here for environment-specific tweaks, e.g.:
+#   components:
+#     terraform:
+#       proxmox-vms:
+#         vars:
+#           target_node: "pve-2"
+
+import:
+  - catalog/cluster
+
+vars:
+  stage: prod

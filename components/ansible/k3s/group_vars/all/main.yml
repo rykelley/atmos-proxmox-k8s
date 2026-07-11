@@ -1,0 +1,29 @@
+# Defaults for standalone runs. Atmos overrides these via --extra-vars using the
+# values from stacks/catalog/cluster.yaml (extra-vars take highest precedence).
+
+# Versions
+k3s_version: "v1.36.2+k3s1"
+kube_vip_version: "v0.8.7"
+
+# HA control-plane VIP
+control_plane_vip: "10.10.1.30"
+api_port: 6443
+
+# Network interface kube-vip advertises the VIP on (Proxmox virtio NIC on
+# Ubuntu cloud images is typically ens18).
+kube_vip_interface: "ens18"
+
+# Kubernetes networking (Cilium owns CNI; flannel/kube-proxy disabled)
+pod_cidr: "10.42.0.0/16"
+service_cidr: "10.43.0.0/16"
+cluster_dns: "10.43.0.10"
+
+# k3s installer
+k3s_install_url: "https://get.k3s.io"
+k3s_server_disable:
+  - traefik
+  - servicelb
+
+# Where the fetched kubeconfig is written on the control node (relative to the
+# component dir). Set by site.yml.
+kubeconfig_fetch_dir: "fetched"

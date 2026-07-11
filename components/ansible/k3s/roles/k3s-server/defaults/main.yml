@@ -1,0 +1,3 @@
+---
+# Whether this server bootstraps the cluster (--cluster-init). Set by site.yml.
+k3s_cluster_init: false

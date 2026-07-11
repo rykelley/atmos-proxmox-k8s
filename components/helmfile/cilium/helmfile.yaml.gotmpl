@@ -1,0 +1,56 @@
+# Cilium CNI for k3s with full kube-proxy replacement.
+# Atmos passes stack `vars` as Helmfile state values (.Values.*) and sets
+# KUBECONFIG via the component `env`.
+
+repositories:
+  - name: cilium
+    url: https://helm.cilium.io/
+
+releases:
+  - name: cilium
+    namespace: kube-system
+    chart: cilium/cilium
+    version: {{ .Values.cilium_chart_version | default "1.16.5" | quote }}
+    wait: true
+    waitForJobs: true
+    timeout: 600
+    values:
+      - kubeProxyReplacement: true
+        k8sServiceHost: {{ .Values.control_plane_vip | default "10.10.1.30" | quote }}
+        k8sServicePort: {{ .Values.api_port | default 6443 }}
+
+        # k3s allocates per-node podCIDRs from --cluster-cidr, so use the
+        # Kubernetes IPAM mode which honors those allocations.
+        ipam:
+          mode: kubernetes
+
+        # Native routing is not assumed across the L2 segment; use tunneling
+        # (VXLAN) which works on a flat 10.10.1.0/24 bridge.
+        routingMode: tunnel
+        tunnelProtocol: vxlan
+
+        operator:
+          replicas: 2
+
+        # Socket-based load balancing complements the kube-proxy replacement.
+        socketLB:
+          enabled: true
+
+        # k3s works with Cilium's default CNI paths (/opt/cni/bin,
+        # /etc/cni/net.d) once flannel is disabled - do NOT override them.
+
+        # Required so socket-LB / kube-proxy replacement works under k3s.
+        cgroup:
+          autoMount:
+            enabled: false
+          hostRoot: /sys/fs/cgroup
+
+        bpf:
+          masquerade: true
+
+        hubble:
+          enabled: true
+          relay:
+            enabled: true
+          ui:
+            enabled: true

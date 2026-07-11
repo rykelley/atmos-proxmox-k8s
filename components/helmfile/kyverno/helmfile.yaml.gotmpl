@@ -1,0 +1,40 @@
+# Kyverno policy engine + a starter Pod Security policy set (audit mode).
+# Atmos passes stack `vars` as Helmfile state values (.Values.*) and sets
+# KUBECONFIG via the component `env`.
+
+repositories:
+  - name: kyverno
+    url: https://kyverno.github.io/kyverno/
+
+releases:
+  - name: kyverno
+    namespace: kyverno
+    chart: kyverno/kyverno
+    version: {{ .Values.kyverno_chart_version | default "3.3.4" | quote }}
+    createNamespace: true
+    wait: true
+    waitForJobs: true
+    timeout: 600
+    values:
+      - admissionController:
+          replicas: {{ .Values.kyverno_replicas | default 3 }}
+        backgroundController:
+          replicas: 1
+        cleanupController:
+          replicas: 1
+        reportsController:
+          replicas: 1
+
+  - name: kyverno-policies
+    namespace: kyverno
+    chart: kyverno/kyverno-policies
+    version: {{ .Values.kyverno_policies_chart_version | default "3.3.4" | quote }}
+    needs:
+      - kyverno/kyverno
+    wait: true
+    timeout: 300
+    values:
+      # Pod Security Standards baseline. Start in "Audit" to avoid blocking
+      # existing workloads; switch to "Enforce" once violations are clean.
+      - validationFailureAction: {{ .Values.kyverno_validation_action | default "Audit" | quote }}
+        podSecurityStandard: baseline

@@ -1,0 +1,17 @@
+---
+# Stage the kube-vip control-plane manifest into the k3s auto-deploy directory.
+# k3s applies every manifest in /var/lib/rancher/k3s/server/manifests once the
+# API server is up. kube-vip runs with hostNetwork, so it brings up the VIP
+# without requiring a CNI to be installed first.
+
+- name: Ensure k3s server manifests directory exists
+  ansible.builtin.file:
+    path: /var/lib/rancher/k3s/server/manifests
+    state: directory
+    mode: "0755"
+
+- name: Render kube-vip RBAC + DaemonSet manifest
+  ansible.builtin.template:
+    src: kube-vip.yaml.j2
+    dest: /var/lib/rancher/k3s/server/manifests/kube-vip.yaml
+    mode: "0600"

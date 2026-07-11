@@ -1,0 +1,109 @@
+# yaml-language-server: $schema=https://atmos.tools/schemas/atmos/atmos-manifest/1.0/atmos-manifest.json
+#
+# Single source of truth for the cluster. Imported by the deploy stack.
+# Vars are scoped per component so each tool receives only what it needs
+# (this keeps `atmos terraform` free of undeclared-variable warnings).
+#
+# Edit THIS file to adapt the cluster to your environment. The node IPs here
+# must match components/ansible/k3s/inventory/hosts.yml.
+
+components:
+  terraform:
+    proxmox-vms:
+      metadata:
+        component: proxmox-vms
+      vars:
+        # --- Proxmox ---
+        target_node: "pve1"
+        template_name: "ubuntu-2404-cloudinit"
+        template_id: 0
+        datastore_id: "local-lvm"
+        snippets_datastore_id: "local"
+        ci_user: "ubuntu"
+        ssh_public_keys:
+          - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAIvPLEv5/P7zGc833XvRZSc5C4kEIIN0sMzcumHfeR1 rykelley@Ryans-MBP.localdomain"
+
+        # --- Network (control-plane bridged on 10.10.1.0/24) ---
+        bridge: "vmbr0"
+        vlan_id: 0
+        gateway: "10.10.1.1"
+        netmask: 24
+        dns_servers:
+          - "1.1.1.1"
+          - "8.8.8.8"
+        dns_domain: "lan"
+
+        vm_defaults:
+          cores: 2
+          sockets: 1
+          memory: 4096
+          disk_size: 40
+          cpu_type: "host"
+          os_type: "l26"
+          started: true
+          on_boot: true
+          agent: true
+
+        # --- Nodes (3 servers + 3 agents) ---
+        nodes:
+          k3s-server-1: { role: "server", ip: "10.10.1.31", vmid: 8101 }
+          k3s-server-2: { role: "server", ip: "10.10.1.32", vmid: 8102 }
+          k3s-server-3: { role: "server", ip: "10.10.1.33", vmid: 8103 }
+          k3s-agent-1: { role: "agent", ip: "10.10.1.34", vmid: 8201 }
+          k3s-agent-2: { role: "agent", ip: "10.10.1.35", vmid: 8202 }
+          k3s-agent-3: { role: "agent", ip: "10.10.1.36", vmid: 8203 }
+
+  ansible:
+    k3s:
+      metadata:
+        component: k3s
+      settings:
+        ansible:
+          playbook: site.yml
+          inventory: inventory/hosts.yml
+        depends_on:
+          1:
+            component: proxmox-vms
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: "false"
+        ANSIBLE_FORCE_COLOR: "true"
+      vars:
+        k3s_version: "v1.36.2+k3s1"
+        kube_vip_version: "v0.8.7"
+        kube_vip_interface: "eth0"
+        control_plane_vip: "10.10.1.30"
+        api_port: 6443
+        pod_cidr: "10.42.0.0/16"
+        service_cidr: "10.43.0.0/16"
+        cluster_dns: "10.43.0.10"
+
+  helmfile:
+    cilium:
+      metadata:
+        component: cilium
+      settings:
+        depends_on:
+          1:
+            component: k3s
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
+      vars:
+        cilium_chart_version: "1.16.5"
+        control_plane_vip: "10.10.1.30"
+        api_port: 6443
+        pod_cidr: "10.42.0.0/16"
+
+    kyverno:
+      metadata:
+        component: kyverno
+      settings:
+        depends_on:
+          1:
+            component: cilium
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
+      vars:
+        kyverno_chart_version: "3.3.4"
+        kyverno_policies_chart_version: "3.3.4"
+        kyverno_replicas: 3
+        kyverno_validation_action: "Audit"
