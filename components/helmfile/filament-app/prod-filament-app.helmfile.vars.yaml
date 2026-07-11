@@ -1,0 +1,15 @@
+db_secret_key: DATABASE_URL
+db_secret_name: filament-db
+filament_namespace: filament
+gateway_hostname: ""
+gateway_interface: eth0
+gateway_lb_ip: 10.10.1.240
+gateway_lb_start: 10.10.1.240
+gateway_lb_stop: 10.10.1.250
+image_owner: rykelley
+image_pull_secret: ghcr
+image_registry: ghcr.io
+image_tag: sha-6a9793890a50a3243f55a27171264072bfca7734
+network_policy_enabled: true
+stage: prod
+supabase_port: 5432
