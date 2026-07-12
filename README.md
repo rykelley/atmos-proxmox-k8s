@@ -72,8 +72,10 @@ components/
   helmfile/cilium/                # Cilium CNI (+ Gateway API, L2 LB)
   helmfile/kyverno/               # Kyverno policy engine + starter + filament policies
   helmfile/filament-app/          # Filament Tracker app (local Helm chart)
+  helmfile/hubble-ui/             # Exposes Hubble UI on the LAN (local Helm chart)
 apps/
   filament-tracker/               # app source: services/, web/, chart/
+  hubble-ui-gateway/              # Gateway + HTTPRoute for Hubble UI
 stacks/
   catalog/cluster.yaml            # single source of truth (nodes, VIP, CIDRs, Proxmox params)
   deploy/prod/cluster.yaml        # prod stack wiring all components
@@ -217,6 +219,49 @@ Local development (outside the cluster):
 # in each services/* dir and web/: set DATABASE_URL / CATALOG_URL / INVENTORY_URL
 npm install && npm run dev
 ```
+
+## Observability (Hubble UI)
+
+Cilium ships [Hubble](https://github.com/cilium/hubble) (relay + UI) enabled
+by default in this cluster (`components/helmfile/cilium`), but it's
+ClusterIP-only out of the box. The `hubble-ui` component exposes it on the
+LAN the same way the app is exposed - a Cilium Gateway API `Gateway` with an
+L2-announced LoadBalancer IP, reusing the `CiliumLoadBalancerIPPool` /
+`CiliumL2AnnouncementPolicy` already shipped with `filament-app` (they
+select any Service Cilium creates for a Gateway, regardless of namespace).
+
+```bash
+atmos helmfile apply hubble-ui -s prod -- --skip-diff-on-install
+```
+
+Then browse to **`http://10.10.1.241`** to see live network flows, policy
+verdicts, and service maps for the whole cluster.
+
+> **No authentication.** Hubble UI has no login of its own - only expose it
+> on a trusted LAN segment, never publicly.
+
+## Troubleshooting
+
+- **`GatewayClass`/`Gateway` stuck `Unknown`/`Pending`, or no LB IP gets
+  announced (empty `l2-announce` state, no `cilium-l2announce-*` lease):**
+  this happens if the Cilium agents/operator were already running *before*
+  Gateway API CRDs existed or before `enable_gateway_api` /
+  `enable_l2_announcements` were turned on - the controllers only wire these
+  features up at startup. Fix by restarting the affected components after
+  the config/CRDs are in place:
+
+  ```bash
+  kubectl -n kube-system rollout restart deploy/cilium-operator
+  kubectl -n kube-system rollout restart ds/cilium
+  ```
+
+- **Cilium operator logs `Required GatewayAPI resources are not found ...
+  "tlsroutes.gateway.networking.k8s.io" not found`:** Cilium's Gateway
+  controller requires the *experimental* Gateway API CRD channel (adds
+  `TLSRoute`/`TCPRoute`/`UDPRoute`), not the `standard-install.yaml` used by
+  most other implementations. This repo already points
+  `gateway_api_crds_url` at `experimental-install.yaml` - if you changed it,
+  switch it back and re-apply.
 
 ## Teardown
 

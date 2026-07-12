@@ -29,10 +29,17 @@ workflows:
         # (see README). --skip-diff-on-install avoids diffing Cilium/Gateway CRs
         # whose CRDs were installed by earlier steps.
         command: helmfile apply filament-app -s prod -- --skip-diff-on-install
+      - name: deploy-hubble-ui
+        # Reuses the LB IP pool + L2 announcement policy from filament-app, so
+        # this must come after it.
+        command: helmfile apply hubble-ui -s prod -- --skip-diff-on-install
 
   destroy-cluster:
     description: "Tear down the cluster in reverse order (removes the VMs)."
     steps:
+      - name: destroy-hubble-ui
+        command: helmfile destroy hubble-ui -s prod
+        # Best-effort: the cluster may already be gone.
       - name: destroy-filament-app
         command: helmfile destroy filament-app -s prod
         # Best-effort: the cluster may already be gone.

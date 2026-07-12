@@ -1,0 +1,6 @@
+apiVersion: v2
+name: hubble-ui-gateway
+description: Exposes Cilium's Hubble UI on the LAN via a Cilium Gateway API Gateway, reusing the existing L2-announced LoadBalancer IP pool.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

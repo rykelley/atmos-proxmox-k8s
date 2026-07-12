@@ -99,6 +99,24 @@ components:
         k8s_client_burst: 20
         gateway_api_crds_url: "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/experimental-install.yaml"
 
+    hubble-ui:
+      metadata:
+        component: hubble-ui
+      settings:
+        depends_on:
+          1:
+            component: cilium
+          # The shared LB IP pool + L2 announcement policy live in the
+          # filament-app chart, so that must be applied first.
+          2:
+            component: filament-app
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
+      vars:
+        # --- Cilium Gateway L2 LoadBalancer (Hubble UI observability) ---
+        hubble_gateway_hostname: ""
+        hubble_lb_ip: "10.10.1.241"
+
     kyverno:
       metadata:
         component: kyverno

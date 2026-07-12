@@ -1,0 +1,24 @@
+# Exposes Cilium's Hubble UI (network observability) on the LAN via a Cilium
+# Gateway API Gateway, reusing the LB IP pool + L2 announcement policy shipped
+# with filament-app (they select any Service Cilium creates for a Gateway,
+# regardless of namespace). Atmos passes stack `vars` as Helmfile state
+# values (.Values.*) and sets KUBECONFIG via the component env.
+#
+# NOTE: Hubble UI has no built-in authentication - it's intended for a
+# trusted LAN only. Do not expose it beyond your local network.
+
+releases:
+  - name: hubble-ui-gateway
+    namespace: kube-system
+    chart: ../../../apps/hubble-ui-gateway/chart
+    createNamespace: false
+    wait: true
+    timeout: 300
+    values:
+      - namespace: kube-system
+        gateway:
+          name: hubble-ui
+          className: cilium
+          hostname: {{ .Values.hubble_gateway_hostname | default "" | quote }}
+        loadBalancer:
+          ip: {{ .Values.hubble_lb_ip | default "10.10.1.241" | quote }}
