@@ -97,7 +97,7 @@ components:
         enable_l2_announcements: true
         k8s_client_qps: 15
         k8s_client_burst: 20
-        gateway_api_crds_url: "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml"
+        gateway_api_crds_url: "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/experimental-install.yaml"
 
     kyverno:
       metadata:
@@ -149,6 +149,6 @@ components:
         gateway_interface: "eth0"
         # --- Network policy ---
         network_policy_enabled: true
-        # 5432 = Supabase direct connection (matches the db-deployment secret).
-        # Use 6543 if you switch DATABASE_URL to the connection pooler.
-        supabase_port: 5432
+        # Supabase's direct host (db.<ref>.supabase.co) is IPv6-only, which the
+        # IPv4 pod network can't reach. Use the connection pooler (IPv4) on 6543.
+        supabase_port: 6543
