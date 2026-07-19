@@ -1,0 +1,25 @@
+# cluster-tools - read-only OpenAPI tool server for the "chat with your
+# cluster" copilot. Open WebUI ingests its /openapi.json so the LLM can query
+# Prometheus, Loki, pods/events/nodes and Argo CD app status mid-conversation.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cluster-tools
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/rykelley/atmos-proxmox-k8s.git
+    targetRevision: main
+    path: gitops/cluster-tools
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rag
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

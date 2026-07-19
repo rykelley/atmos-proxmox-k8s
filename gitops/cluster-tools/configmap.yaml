@@ -1,0 +1,235 @@
+# The tool server code. A single-file FastAPI app: each endpoint becomes an
+# LLM-callable tool in Open WebUI (which ingests the auto-generated OpenAPI
+# spec at /openapi.json). Summaries/descriptions below are what the LLM reads
+# when deciding which tool to call - keep them clear and imperative.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-tools-code
+  namespace: rag
+  labels:
+    app.kubernetes.io/name: cluster-tools
+    app.kubernetes.io/part-of: rag
+data:
+  main.py: |
+    """Read-only Kubernetes/Prometheus/Loki tools for the cluster copilot."""
+    import os
+    import ssl
+    import httpx
+    from fastapi import FastAPI, Query
+
+    PROMETHEUS = os.environ.get(
+        "PROMETHEUS_URL",
+        "http://monitoring-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090",
+    )
+    LOKI = os.environ.get(
+        "LOKI_URL", "http://loki-gateway.monitoring.svc.cluster.local"
+    )
+    K8S = "https://kubernetes.default.svc"
+    SA = "/var/run/secrets/kubernetes.io/serviceaccount"
+
+    app = FastAPI(
+        title="Cluster Tools",
+        description="Read-only tools to inspect this Kubernetes cluster: "
+        "Prometheus metrics, Loki logs, pods, events, and Argo CD apps.",
+        version="1.0.0",
+    )
+
+    def k8s_client() -> httpx.Client:
+        with open(f"{SA}/token") as f:
+            token = f.read().strip()
+        ctx = ssl.create_default_context(cafile=f"{SA}/ca.crt")
+        return httpx.Client(
+            base_url=K8S, verify=ctx, headers={"Authorization": f"Bearer {token}"}
+        )
+
+    @app.get(
+        "/metrics/query",
+        summary="Run a PromQL query against Prometheus",
+        operation_id="query_metrics",
+    )
+    def query_metrics(
+        promql: str = Query(
+            ...,
+            description="PromQL expression, e.g. "
+            "'sum(rate(vllm:generation_tokens_total[5m]))' for LLM tokens/sec, "
+            "'vllm:num_requests_waiting' for queue depth, "
+            "'DCGM_FI_DEV_GPU_UTIL' for GPU utilization %, "
+            "'DCGM_FI_DEV_GPU_TEMP' for GPU temperature.",
+        ),
+    ):
+        """Run an instant PromQL query. Returns current metric values with labels.
+        Useful metrics: vllm:* (inference), DCGM_FI_DEV_* (GPU), node_* (hosts),
+        container_memory_working_set_bytes / container_cpu_usage_seconds_total
+        (per-pod usage), kube_pod_status_phase (pod states)."""
+        r = httpx.get(f"{PROMETHEUS}/api/v1/query", params={"query": promql}, timeout=30)
+        return r.json()
+
+    @app.get(
+        "/logs/query",
+        summary="Search recent pod logs in Loki with a LogQL query",
+        operation_id="query_logs",
+    )
+    def query_logs(
+        logql: str = Query(
+            ...,
+            description="LogQL expression, e.g. '{namespace=\"vllm\"}' for all "
+            "vLLM logs, '{namespace=\"rag\"} |= \"error\"' for rag-namespace "
+            "lines containing 'error'. Every pod's logs are shipped here, "
+            "labeled by namespace/pod/container.",
+        ),
+        minutes: int = Query(60, description="How many minutes back to search."),
+        limit: int = Query(50, description="Max log lines to return."),
+    ):
+        """Search the last N minutes of logs from any pod in the cluster.
+        Loki stores logs from every namespace, labeled by namespace, pod and
+        container. Returns matching log lines, newest first."""
+        import time
+
+        end = time.time_ns()
+        start = end - minutes * 60 * 1_000_000_000
+        r = httpx.get(
+            f"{LOKI}/loki/api/v1/query_range",
+            params={
+                "query": logql,
+                "start": start,
+                "end": end,
+                "limit": limit,
+                "direction": "backward",
+            },
+            timeout=30,
+        )
+        data = r.json()
+        # Flatten to plain lines so the LLM doesn't wade through stream JSON.
+        lines = []
+        for stream in data.get("data", {}).get("result", []):
+            labels = stream.get("stream", {})
+            tag = f'{labels.get("namespace", "?")}/{labels.get("pod", "?")}'
+            for _, line in stream.get("values", []):
+                lines.append(f"[{tag}] {line}")
+        return {"matched_lines": len(lines), "lines": lines[:limit]}
+
+    @app.get(
+        "/k8s/pods",
+        summary="List pods and their status",
+        operation_id="list_pods",
+    )
+    def list_pods(
+        namespace: str = Query(
+            "", description="Namespace to list; empty for all namespaces."
+        ),
+    ):
+        """List pods with phase, readiness, restart counts and node placement.
+        Use this to answer 'what is running / crashed / pending and where'."""
+        path = f"/api/v1/namespaces/{namespace}/pods" if namespace else "/api/v1/pods"
+        with k8s_client() as c:
+            items = c.get(path, timeout=30).json().get("items", [])
+        pods = []
+        for p in items:
+            statuses = p.get("status", {}).get("containerStatuses", []) or []
+            pods.append(
+                {
+                    "namespace": p["metadata"]["namespace"],
+                    "name": p["metadata"]["name"],
+                    "phase": p.get("status", {}).get("phase"),
+                    "node": p.get("spec", {}).get("nodeName"),
+                    "ready": f"{sum(1 for s in statuses if s.get('ready'))}/{len(statuses)}",
+                    "restarts": sum(s.get("restartCount", 0) for s in statuses),
+                }
+            )
+        return {"count": len(pods), "pods": pods}
+
+    @app.get(
+        "/k8s/events",
+        summary="List recent Kubernetes events (warnings first)",
+        operation_id="list_events",
+    )
+    def list_events(
+        namespace: str = Query(
+            "", description="Namespace to list; empty for all namespaces."
+        ),
+        limit: int = Query(30, description="Max events to return."),
+    ):
+        """List recent cluster events - scheduling failures, image pull errors,
+        OOM kills, probe failures. The first place to look when something is
+        Pending or crashlooping."""
+        path = (
+            f"/api/v1/namespaces/{namespace}/events" if namespace else "/api/v1/events"
+        )
+        with k8s_client() as c:
+            items = c.get(path, timeout=30).json().get("items", [])
+        items.sort(
+            key=lambda e: (
+                e.get("type") != "Warning",
+                e.get("lastTimestamp") or e.get("eventTime") or "",
+            )
+        )
+        events = [
+            {
+                "type": e.get("type"),
+                "reason": e.get("reason"),
+                "object": f'{e.get("involvedObject", {}).get("kind")}/'
+                f'{e.get("involvedObject", {}).get("name")}',
+                "namespace": e.get("involvedObject", {}).get("namespace"),
+                "count": e.get("count"),
+                "last_seen": e.get("lastTimestamp") or e.get("eventTime"),
+                "message": e.get("message"),
+            }
+            for e in items[:limit]
+        ]
+        return {"count": len(events), "events": events}
+
+    @app.get(
+        "/k8s/nodes",
+        summary="List nodes with capacity and conditions",
+        operation_id="list_nodes",
+    )
+    def list_nodes():
+        """List cluster nodes with readiness, roles, CPU/memory/GPU capacity
+        and any taints. The GPU node advertises nvidia.com/gpu."""
+        with k8s_client() as c:
+            items = c.get("/api/v1/nodes", timeout=30).json().get("items", [])
+        nodes = []
+        for n in items:
+            conds = {
+                c_["type"]: c_["status"] for c_ in n.get("status", {}).get("conditions", [])
+            }
+            alloc = n.get("status", {}).get("allocatable", {})
+            nodes.append(
+                {
+                    "name": n["metadata"]["name"],
+                    "ready": conds.get("Ready"),
+                    "cpu": alloc.get("cpu"),
+                    "memory": alloc.get("memory"),
+                    "gpus": alloc.get("nvidia.com/gpu", "0"),
+                    "taints": [
+                        f'{t["key"]}={t.get("value", "")}:{t["effect"]}'
+                        for t in n.get("spec", {}).get("taints", []) or []
+                    ],
+                }
+            )
+        return {"count": len(nodes), "nodes": nodes}
+
+    @app.get(
+        "/argocd/apps",
+        summary="List Argo CD applications and their sync/health status",
+        operation_id="list_argocd_apps",
+    )
+    def list_argocd_apps():
+        """List every Argo CD Application with sync status (in sync with Git?)
+        and health. Use this to answer 'is the GitOps state healthy / what
+        failed to deploy'."""
+        with k8s_client() as c:
+            r = c.get(
+                "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications", timeout=30
+            )
+        apps = [
+            {
+                "name": a["metadata"]["name"],
+                "sync": a.get("status", {}).get("sync", {}).get("status"),
+                "health": a.get("status", {}).get("health", {}).get("status"),
+                "revision": (a.get("status", {}).get("sync", {}).get("revision") or "")[:8],
+            }
+            for a in r.json().get("items", [])
+        ]
+        return {"count": len(apps), "apps": apps}

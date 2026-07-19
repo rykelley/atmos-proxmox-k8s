@@ -1,0 +1,44 @@
+# Read-only RBAC for the cluster-tools LLM tool server. The LLM can look but
+# never touch: get/list only, no secrets, no create/update/delete verbs.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cluster-tools
+  namespace: rag
+  labels:
+    app.kubernetes.io/name: cluster-tools
+    app.kubernetes.io/part-of: rag
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-tools-readonly
+  labels:
+    app.kubernetes.io/name: cluster-tools
+    app.kubernetes.io/part-of: rag
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "events", "nodes", "namespaces", "services"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-tools-readonly
+  labels:
+    app.kubernetes.io/name: cluster-tools
+    app.kubernetes.io/part-of: rag
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-tools-readonly
+subjects:
+  - kind: ServiceAccount
+    name: cluster-tools
+    namespace: rag

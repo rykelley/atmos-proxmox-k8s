@@ -88,9 +88,10 @@ apps/
   vllm/                           # vLLM Helm chart (Deployment + LB Service + Cilium LB pool)
 gitops/                           # Argo CD app-of-apps (RAG platform + monitoring + logging)
   root-app.yaml                   # app-of-apps root Application
-  apps/                           # child Applications (monitoring, loki, alloy, qdrant, embeddings, open-webui, networking)
+  apps/                           # child Applications (monitoring, loki, alloy, qdrant, embeddings, open-webui, networking, cluster-tools)
   networking/                     # Cilium LB pools for open-webui + grafana
   embeddings/                     # GPU embeddings server (vLLM embed mode) manifests
+  cluster-tools/                  # read-only OpenAPI tool server ("chat with your cluster")
 stacks/
   catalog/cluster.yaml            # single source of truth (nodes, VIP, CIDRs, Proxmox params)
   deploy/prod/cluster.yaml        # prod stack wiring all components
@@ -402,6 +403,7 @@ Components:
 | embeddings | in-cluster | vLLM embed-mode (`BAAI/bge-base-en-v1.5`) |
 | Loki | in-cluster | Log storage + query engine (filesystem-backed) |
 | Grafana Alloy | in-cluster (DaemonSet) | Ships every pod's logs to Loki |
+| cluster-tools | in-cluster | Read-only OpenAPI tool server so the LLM can inspect the cluster |
 
 ```mermaid
 flowchart LR
@@ -547,6 +549,33 @@ histogram_quantile(0.95, sum(rate(vllm:time_to_first_token_seconds_bucket[5m])) 
 vllm:num_requests_waiting                                    # queue depth right now
 vllm:kv_cache_usage_perc                                      # how full the KV cache is
 ```
+
+### Chat with your cluster (LLM tool calling)
+
+The most fun part: the chat model can inspect the cluster it runs on.
+[gitops/cluster-tools/](gitops/cluster-tools/) deploys a small **read-only
+OpenAPI tool server** (FastAPI) that exposes six tools - PromQL queries, LogQL
+log search, pods, events, nodes, and Argo CD app status - backed by a
+get/list-only ClusterRole (no secrets, no writes). Open WebUI ingests its
+OpenAPI spec and lets the LLM call the endpoints mid-conversation.
+
+One-time setup in Open WebUI (admin account):
+
+1. **Admin Settings -> Tools** (or **Settings -> Connections** on newer
+   versions) -> add a tool server.
+2. URL: `http://cluster-tools.rag.svc.cluster.local:8000` - make sure it's
+   `http://`, not the pre-filled `https://`.
+3. Save. In a chat, open the **+** menu and enable the cluster tools.
+
+Then ask things like:
+
+- *"Which pods are not ready right now, and why?"* (pods + events)
+- *"Why did vLLM restart last night?"* (Loki log search)
+- *"How hot is the GPU and what's the current tokens/sec?"* (PromQL)
+- *"Is everything Argo manages in sync?"* (Argo CD apps)
+
+The LLM answering is the same vLLM server whose queue depth it can report -
+the cluster explains itself, from its own telemetry, on its own GPU.
 
 ### GitOps loop
 
