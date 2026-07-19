@@ -524,6 +524,30 @@ mount needed). Loki runs in `SingleBinary` mode with a 10Gi filesystem-backed
 PVC and a 7-day retention (`loki.limits_config.retention_period`) - sized for
 learning/homelab volume, not production log scale.
 
+### vLLM metrics (capacity dashboard)
+
+Both vLLM servers (chat and embeddings) expose their own Prometheus metrics at
+`/metrics` on the same port as the OpenAI API - queue depth, time-to-first-token,
+tokens/sec, KV cache usage, and per-request latency percentiles. A
+`ServiceMonitor` in the vLLM chart
+([apps/vllm/chart/templates/servicemonitor.yaml](apps/vllm/chart/templates/servicemonitor.yaml))
+and one alongside the embeddings manifests
+([gitops/embeddings/servicemonitor.yaml](gitops/embeddings/servicemonitor.yaml))
+get both scraped automatically (`serviceMonitorSelectorNilUsesHelmValues:
+false` means Prometheus watches every namespace). Grafana ships the community
+[vLLM dashboard](https://grafana.com/grafana/dashboards/23991-vllm/)
+(`gnetId: 23991`) alongside the NVIDIA DCGM one.
+
+Useful PromQL to know the answer to "how many concurrent users can this GPU
+serve":
+
+```promql
+sum(rate(vllm:generation_tokens_total[5m]))                 # tokens/sec, cluster-wide
+histogram_quantile(0.95, sum(rate(vllm:time_to_first_token_seconds_bucket[5m])) by (le))
+vllm:num_requests_waiting                                    # queue depth right now
+vllm:kv_cache_usage_perc                                      # how full the KV cache is
+```
+
 ### GitOps loop
 
 Change a workload by editing its file under [gitops/apps/](gitops/apps/) (e.g.

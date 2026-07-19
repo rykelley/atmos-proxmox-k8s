@@ -1,0 +1,24 @@
+# Lets kube-prometheus-stack scrape vLLM's built-in Prometheus metrics
+# (tokens/sec, queue depth, time-to-first-token, KV cache usage, ...) at
+# /metrics on the same port as the OpenAI API. The monitoring Helmfile sets
+# serviceMonitorSelectorNilUsesHelmValues=false, so Prometheus watches
+# ServiceMonitors in every namespace regardless of label - no extra wiring
+# needed on the Prometheus side.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vllm
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "vllm.labels" (dict "name" "vllm" "component" "inference" "root" $) | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "vllm.selectorLabels" (dict "name" "vllm") | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

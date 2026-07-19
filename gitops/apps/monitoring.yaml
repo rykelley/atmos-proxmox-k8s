@@ -46,6 +46,14 @@ spec:
                 gnetId: 12239
                 revision: 2
                 datasource: Prometheus
+              vllm:
+                # vLLM inference server dashboard (grafana.com/dashboards/23991)
+                # - queue depth, TTFT, tokens/sec, KV cache usage, latencies.
+                # Covers both the chat vLLM and the embeddings server (same
+                # binary, same vllm:* metric names, filterable by namespace).
+                gnetId: 23991
+                revision: 3
+                datasource: Prometheus
           # Loki (gitops/apps/loki.yaml) stores logs shipped by Alloy
           # (gitops/apps/alloy.yaml). This adds a "Loki" datasource so
           # Grafana Explore can query logs alongside Prometheus metrics.

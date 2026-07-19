@@ -1,0 +1,22 @@
+# Same vLLM binary as the chat model (in --task embed mode), so it exposes
+# the same vllm:* Prometheus metrics at /metrics. Scraped into the same
+# Grafana dashboard/panels as the chat vLLM, filterable by namespace/pod.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: embeddings
+  namespace: rag
+  labels:
+    app.kubernetes.io/name: embeddings
+    app.kubernetes.io/part-of: rag
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: embeddings
+  namespaceSelector:
+    matchNames:
+      - rag
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
