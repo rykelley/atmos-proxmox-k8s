@@ -1,0 +1,33 @@
+# vLLM OpenAI-compatible inference server on the bare-metal Blackwell GPU node.
+#
+# Requires the GPU Operator (device plugin + nvidia RuntimeClass) to be ready so
+# the pod can request `nvidia.com/gpu`. The pod tolerates the GPU node taint and
+# is exposed on a dedicated Cilium L2 LoadBalancer IP. Atmos passes stack `vars`
+# as Helmfile state values (.Values.*) and sets KUBECONFIG via the component env.
+
+releases:
+  - name: vllm
+    namespace: {{ .Values.vllm_namespace | default "vllm" }}
+    chart: ../../../apps/vllm/chart
+    createNamespace: true
+    # The pod stays "not ready" until the model is downloaded + loaded, which can
+    # exceed the wait window on first run; don't block the apply on it.
+    wait: false
+    timeout: 900
+    values:
+      - namespace: {{ .Values.vllm_namespace | default "vllm" | quote }}
+        image:
+          repository: vllm/vllm-openai
+          tag: {{ .Values.vllm_image_tag | default "v0.11.0" | quote }}
+          pullPolicy: IfNotPresent
+        model:
+          name: {{ .Values.vllm_model | default "Qwen/Qwen2.5-3B-Instruct" | quote }}
+          maxModelLen: {{ .Values.vllm_max_model_len | default 8192 }}
+          gpuMemoryUtilization: {{ .Values.vllm_gpu_memory_utilization | default "0.90" | quote }}
+        modelCache:
+          size: {{ .Values.vllm_model_cache_size | default "30Gi" | quote }}
+        hfTokenSecret: {{ .Values.vllm_hf_token_secret | default "" | quote }}
+        loadBalancer:
+          poolName: vllm-lb-pool
+          ip: {{ .Values.vllm_lb_ip | default "10.10.1.242" | quote }}
+          interface: {{ .Values.vllm_lb_interface | default "eth0" | quote }}

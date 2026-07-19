@@ -99,6 +99,78 @@ components:
         k8s_client_burst: 20
         gateway_api_crds_url: "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/experimental-install.yaml"
 
+    argocd:
+      metadata:
+        component: argocd
+      settings:
+        depends_on:
+          1:
+            component: cilium
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
+      vars:
+        argocd_namespace: "argocd"
+        argocd_chart_version: "10.1.4"
+        # Argo CD web UI on a dedicated Cilium L2 LoadBalancer IP.
+        argocd_lb_ip: "10.10.1.244"
+        argocd_lb_interface: "eth0"
+
+    gpu-operator:
+      metadata:
+        component: gpu-operator
+      settings:
+        depends_on:
+          1:
+            component: cilium
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
+      vars:
+        gpu_operator_namespace: "gpu-operator"
+        # v26.x bundles container-toolkit >= v1.18 which supports containerd
+        # config version 3 (used by k3s v1.32+/containerd 2.x). Older toolkits
+        # crash with "unsupported config version: 3".
+        gpu_operator_chart_version: "v26.3.3"
+        # Host driver is pre-installed on the Blackwell node, so the operator
+        # only manages the toolkit + device plugin (driver.enabled=false in the
+        # helmfile). DCGM exporter ships GPU metrics for observability.
+        gpu_operator_dcgm_enabled: true
+        # Time-slicing: advertise the single GPU as N logical devices so the
+        # chat LLM and the embeddings model can co-schedule on it. Shares (does
+        # not partition) VRAM, so keep the sum of model footprints under total.
+        gpu_timeslicing_enabled: true
+        gpu_timeslicing_replicas: 4
+
+    vllm:
+      metadata:
+        component: vllm
+      settings:
+        depends_on:
+          1:
+            component: gpu-operator
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
+      vars:
+        vllm_namespace: "vllm"
+        # Recent vllm/vllm-openai tag with the CUDA 12.8 build required for
+        # Blackwell (sm_120). Bump as newer releases land.
+        vllm_image_tag: "v0.11.0"
+        # Ungated small model that fits comfortably on the RTX 2000 Blackwell.
+        # Drop to Qwen/Qwen2.5-1.5B-Instruct if VRAM is tight.
+        vllm_model: "Qwen/Qwen2.5-3B-Instruct"
+        vllm_max_model_len: 8192
+        # Leave VRAM headroom for the time-sliced embeddings model on the same
+        # GPU (time-slicing shares memory). Raise toward 0.9 if vLLM runs alone.
+        vllm_gpu_memory_utilization: "0.55"
+        # OpenAI-compatible API served on a dedicated Cilium L2 LoadBalancer IP,
+        # clear of the filament gateway (.240) and Hubble UI (.241).
+        vllm_lb_ip: "10.10.1.242"
+        vllm_lb_interface: "eth0"
+        # Persist the HuggingFace model cache across pod restarts (0 = emptyDir).
+        vllm_model_cache_size: "30Gi"
+        # Optional: name of a pre-created Secret with a HF_TOKEN key for gated
+        # models. Leave "" for ungated models like Qwen.
+        vllm_hf_token_secret: ""
+
     hubble-ui:
       metadata:
         component: hubble-ui
@@ -162,8 +234,13 @@ components:
         # --- Cilium Gateway L2 LoadBalancer ---
         gateway_hostname: ""
         gateway_lb_ip: "10.10.1.240"
+        # Only the two Gateway services live here (filament .240, hubble-ui .241).
+        # Keep this block narrow: dedicated single-IP pools own .242 (vLLM),
+        # .243 (open-webui), .244 (argocd) and .245 (grafana). Cilium flags pools
+        # whose IP ranges OVERLAP as conflicting (regardless of serviceSelector),
+        # so a wide .240-.250 block here would disable those dedicated pools.
         gateway_lb_start: "10.10.1.240"
-        gateway_lb_stop: "10.10.1.250"
+        gateway_lb_stop: "10.10.1.241"
         gateway_interface: "eth0"
         # --- Network policy ---
         network_policy_enabled: true

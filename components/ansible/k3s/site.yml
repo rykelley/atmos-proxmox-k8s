@@ -17,6 +17,15 @@
   roles:
     - common
 
+# Bare-metal GPU host bring-up (driver assert + nvidia-container-toolkit). Runs
+# before the agent join below so k3s auto-detects the `nvidia` runtime on its
+# first start. Only targets the k3s_gpu group, so it is a no-op for VM nodes.
+- name: GPU host preparation
+  hosts: k3s_gpu
+  become: true
+  roles:
+    - gpu
+
 - name: Stage kube-vip control-plane manifest
   hosts: k3s_servers
   become: true

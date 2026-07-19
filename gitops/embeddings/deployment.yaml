@@ -1,0 +1,115 @@
+# GPU embeddings server for RAG.
+#
+# Implemented with vLLM in embedding mode (`--task embed`) rather than HF TEI:
+# it reuses the same Blackwell-proven vllm/vllm-openai image (TEI does not yet
+# ship sm_120 builds) and exposes an OpenAI-compatible /v1/embeddings endpoint.
+#
+# Shares the single GPU with the chat vLLM via time-slicing (requests one of the
+# logical nvidia.com/gpu devices) and keeps a small VRAM footprint.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: embeddings
+  labels:
+    app.kubernetes.io/name: embeddings
+    app.kubernetes.io/part-of: rag
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: embeddings
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: embeddings
+        app.kubernetes.io/part-of: rag
+    spec:
+      runtimeClassName: nvidia
+      # vLLM reads VLLM_PORT; Kubernetes' per-Service env injection can set it to
+      # a `tcp://...` URI and crash the server. Disable service links.
+      enableServiceLinks: false
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: embeddings
+          image: "vllm/vllm-openai:v0.11.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--model"
+            - "BAAI/bge-base-en-v1.5"
+            - "--task"
+            - "embed"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8000"
+            # Small model - cap VRAM so the chat LLM keeps the lion's share of
+            # the time-sliced GPU.
+            - "--gpu-memory-utilization"
+            - "0.20"
+            - "--max-model-len"
+            - "512"
+          env:
+            - name: HF_HOME
+              value: /root/.cache/huggingface
+          ports:
+            - name: http
+              containerPort: 8000
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+              nvidia.com/gpu: 1
+            limits:
+              cpu: "4"
+              memory: 8Gi
+              nvidia.com/gpu: 1
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+          volumeMounts:
+            - name: model-cache
+              mountPath: /root/.cache/huggingface
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+        - name: model-cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: embeddings
+  labels:
+    app.kubernetes.io/name: embeddings
+    app.kubernetes.io/part-of: rag
+spec:
+  selector:
+    app.kubernetes.io/name: embeddings
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

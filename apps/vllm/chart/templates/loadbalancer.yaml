@@ -1,0 +1,32 @@
+# Dedicated Cilium LoadBalancer IPAM + L2 announcement for the vLLM Service.
+# Cluster-scoped Cilium CRDs; the serviceSelector targets only the vLLM Service
+# (by its app label) so this pool stays independent of the filament gateway pool.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: {{ .Values.loadBalancer.poolName }}
+  labels:
+    {{- include "vllm.labels" (dict "name" "vllm-lb-pool" "component" "networking" "root" $) | nindent 4 }}
+spec:
+  blocks:
+    - start: {{ .Values.loadBalancer.ip | quote }}
+      stop: {{ .Values.loadBalancer.ip | quote }}
+  serviceSelector:
+    matchLabels:
+      app.kubernetes.io/name: vllm
+      app.kubernetes.io/part-of: vllm
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: {{ .Values.loadBalancer.poolName }}
+  labels:
+    {{- include "vllm.labels" (dict "name" "vllm-l2-announce" "component" "networking" "root" $) | nindent 4 }}
+spec:
+  serviceSelector:
+    matchLabels:
+      app.kubernetes.io/name: vllm
+      app.kubernetes.io/part-of: vllm
+  interfaces:
+    - {{ printf "^%s$" .Values.loadBalancer.interface | quote }}
+  loadBalancerIPs: true

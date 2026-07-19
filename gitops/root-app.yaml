@@ -1,0 +1,31 @@
+# App-of-apps root. Bootstrapped once with `kubectl apply -f gitops/root-app.yaml`
+# after Argo CD is installed; Argo CD then reconciles every child Application in
+# gitops/apps/ from Git. Edit those files, push to `main`, and Argo syncs.
+#
+# NOTE: update `repoURL` if you fork this repo. For a PRIVATE repo, register a
+# read-only deploy key / credential in Argo CD first (see README), or make the
+# repo public.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/rykelley/atmos-proxmox-k8s.git
+    targetRevision: main
+    path: gitops/apps
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

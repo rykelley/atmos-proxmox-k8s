@@ -1,0 +1,63 @@
+# Open WebUI - chat UI + built-in RAG. Talks to vLLM for chat, the GPU
+# embeddings server for document embeddings, and Qdrant as the vector store.
+# Exposed on 10.10.1.243 (pool in gitops/networking).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: open-webui
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://helm.openwebui.com
+    chart: open-webui
+    targetRevision: 15.2.0
+    helm:
+      values: |
+        # We serve models with vLLM, not the bundled Ollama/Pipelines.
+        ollama:
+          enabled: false
+        pipelines:
+          enabled: false
+        # Single replica -> use the in-memory websocket manager (no Redis).
+        websocket:
+          enabled: false
+        replicaCount: 1
+        persistence:
+          enabled: true
+          size: 5Gi
+        service:
+          type: LoadBalancer
+          annotations:
+            io.cilium/lb-ipam-ips: "10.10.1.243"
+        # --- Chat backend: vLLM (OpenAI-compatible) ---
+        enableOpenaiApi: true
+        openaiBaseApiUrls:
+          - "http://vllm.vllm:8000/v1"
+        openaiApiKeys:
+          - "dummy"
+        # --- RAG: embeddings via the GPU embeddings server, vectors in Qdrant ---
+        extraEnvVars:
+          - name: RAG_EMBEDDING_ENGINE
+            value: "openai"
+          - name: RAG_OPENAI_API_BASE_URL
+            value: "http://embeddings.rag:8000/v1"
+          - name: RAG_OPENAI_API_KEY
+            value: "dummy"
+          - name: RAG_EMBEDDING_MODEL
+            value: "BAAI/bge-base-en-v1.5"
+          - name: VECTOR_DB
+            value: "qdrant"
+          - name: QDRANT_URI
+            value: "http://qdrant.rag:6333"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rag
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

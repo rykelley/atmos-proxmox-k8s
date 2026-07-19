@@ -1,0 +1,97 @@
+# NVIDIA GPU Operator for the bare-metal Blackwell node.
+#
+# The host has BOTH the NVIDIA driver and nvidia-container-runtime installed, so
+# driver.enabled=false and toolkit.enabled=false. k3s auto-detects the host's
+# nvidia-container-runtime and defines the `nvidia` containerd runtime itself.
+# If the operator-managed toolkit is ALSO enabled it defines a *second* `nvidia`
+# runtime, and the two collide (duplicate containerd config -> containerd fails
+# to load it -> node goes NotReady). So we let k3s own the runtime and the
+# operator only runs the device plugin, GFD, NFD and (optional) DCGM metrics.
+#
+# Atmos passes stack `vars` as Helmfile state values (.Values.*) and sets
+# KUBECONFIG via the component env.
+
+repositories:
+  - name: nvidia
+    url: https://helm.ngc.nvidia.com/nvidia
+
+{{- $ns := .Values.gpu_operator_namespace | default "gpu-operator" }}
+{{- $timeSlicing := .Values.gpu_timeslicing_enabled | default true }}
+{{- $replicas := .Values.gpu_timeslicing_replicas | default 4 }}
+
+releases:
+  - name: gpu-operator
+    namespace: {{ $ns }}
+    chart: nvidia/gpu-operator
+    version: {{ .Values.gpu_operator_chart_version | default "v26.3.3" | quote }}
+    createNamespace: true
+    wait: true
+    timeout: 900
+    {{- if $timeSlicing }}
+    # Time-slicing lets the single physical GPU advertise multiple logical
+    # `nvidia.com/gpu` resources so several pods (chat LLM + embeddings) can
+    # share it. The device plugin reads this ConfigMap, so it must exist (and so
+    # must the namespace) before the operator syncs.
+    hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: sh
+        args:
+          - -c
+          - |
+            kubectl create namespace {{ $ns }} --dry-run=client -o yaml | kubectl apply -f -
+            cat <<'EOF' | kubectl apply -f -
+            apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: time-slicing-config
+              namespace: {{ $ns }}
+            data:
+              any: |-
+                version: v1
+                flags:
+                  migStrategy: none
+                sharing:
+                  timeSlicing:
+                    resources:
+                      - name: nvidia.com/gpu
+                        replicas: {{ $replicas }}
+            EOF
+    {{- end }}
+    values:
+      - # Host driver is pre-installed on the Blackwell box.
+        driver:
+          enabled: false
+
+        # Disabled on purpose: k3s already auto-detects the host's
+        # nvidia-container-runtime and defines the `nvidia` containerd runtime.
+        # Enabling the operator toolkit adds a competing definition that
+        # collides with k3s' config. Host + k3s own the runtime here.
+        toolkit:
+          enabled: false
+
+        # The GPU node is tainted so only GPU workloads land there. The operator's
+        # operands must tolerate that taint to run on the node.
+        daemonsets:
+          tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+              effect: NoSchedule
+
+        # GPU metrics for observability (nice for learning). Disable if unwanted.
+        dcgmExporter:
+          enabled: {{ .Values.gpu_operator_dcgm_enabled | default true }}
+        {{- if $timeSlicing }}
+
+        # Point the device plugin at the time-slicing ConfigMap staged by the
+        # presync hook above. `default: any` applies the `any` profile to the
+        # (only) GPU node.
+        devicePlugin:
+          config:
+            name: time-slicing-config
+            default: "any"
+        {{- end }}
+
+        # Let NFD detect the NVIDIA PCI device and label the node.
+        nfd:
+          enabled: true

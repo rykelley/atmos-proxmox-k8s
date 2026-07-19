@@ -1,0 +1,59 @@
+namespace: vllm
+
+image:
+  repository: vllm/vllm-openai
+  # Blackwell (sm_120) requires the CUDA 12.8 build shipped in recent releases.
+  tag: "v0.11.0"
+  pullPolicy: IfNotPresent
+
+replicas: 1
+
+model:
+  # HuggingFace model id. Ungated so no token is required.
+  name: "Qwen/Qwen2.5-3B-Instruct"
+  maxModelLen: 8192
+  gpuMemoryUtilization: "0.90"
+  # Extra raw args appended to the vLLM server (list of strings).
+  extraArgs: []
+
+# One GPU per replica. This request/limit is what pins the pod to the GPU node.
+gpu:
+  count: 1
+
+# Scheduling onto the tainted GPU node.
+nodeSelector:
+  nvidia.com/gpu.present: "true"
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+
+# vLLM is memory-hungry; give it real requests/limits (CPU/memory only - the
+# GPU is scheduled via gpu.count above).
+resources:
+  requests:
+    cpu: "2"
+    memory: 8Gi
+  limits:
+    cpu: "8"
+    memory: 24Gi
+
+# HuggingFace model cache. size "0" => ephemeral emptyDir; otherwise a PVC via
+# the default StorageClass (k3s local-path).
+modelCache:
+  size: "30Gi"
+  storageClassName: ""
+
+# /dev/shm sizing for vLLM tensor-parallel / NCCL shared memory.
+shmSize: 8Gi
+
+# Optional Secret (in this namespace) with an HF_TOKEN key for gated models.
+hfTokenSecret: ""
+
+service:
+  port: 8000
+
+loadBalancer:
+  poolName: vllm-lb-pool
+  ip: "10.10.1.242"
+  interface: "eth0"

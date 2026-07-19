@@ -1,0 +1,59 @@
+# Argo CD - GitOps engine for the RAG platform.
+#
+# Bootstrapped with Helmfile/Atmos (like Cilium/Kyverno), Argo CD then manages
+# the RAG + monitoring workloads from the repo's gitops/ dir via an app-of-apps
+# (see gitops/root-app.yaml). The server is exposed on the LAN via a dedicated
+# Cilium L2 LoadBalancer IP and runs in insecure (HTTP) mode for easy local
+# access. Atmos passes stack `vars` as Helmfile state values (.Values.*).
+
+repositories:
+  - name: argo
+    url: https://argoproj.github.io/argo-helm
+
+releases:
+  - name: argocd
+    namespace: {{ .Values.argocd_namespace | default "argocd" }}
+    chart: argo/argo-cd
+    version: {{ .Values.argocd_chart_version | default "10.1.4" | quote }}
+    createNamespace: true
+    wait: true
+    timeout: 600
+    values:
+      - # Run the API server in HTTP mode; TLS termination isn't needed on a
+        # trusted LAN and this keeps the LoadBalancer on plain port 80.
+        configs:
+          params:
+            server.insecure: true
+        # Dex (SSO) is unnecessary for a single-user learning cluster.
+        dex:
+          enabled: false
+        server:
+          service:
+            type: LoadBalancer
+            annotations:
+              io.cilium/lb-ipam-ips: {{ .Values.argocd_lb_ip | default "10.10.1.244" | quote }}
+        # Cilium LB IPAM + L2 announcement for the Argo CD server Service,
+        # scoped to it by label so it stays independent of other pools.
+        extraObjects:
+          - apiVersion: cilium.io/v2alpha1
+            kind: CiliumLoadBalancerIPPool
+            metadata:
+              name: argocd-lb-pool
+            spec:
+              blocks:
+                - start: {{ .Values.argocd_lb_ip | default "10.10.1.244" | quote }}
+                  stop: {{ .Values.argocd_lb_ip | default "10.10.1.244" | quote }}
+              serviceSelector:
+                matchLabels:
+                  app.kubernetes.io/name: argocd-server
+          - apiVersion: cilium.io/v2alpha1
+            kind: CiliumL2AnnouncementPolicy
+            metadata:
+              name: argocd-lb-pool
+            spec:
+              serviceSelector:
+                matchLabels:
+                  app.kubernetes.io/name: argocd-server
+              interfaces:
+                - {{ printf "^%s$" (.Values.argocd_lb_interface | default "eth0") | quote }}
+              loadBalancerIPs: true

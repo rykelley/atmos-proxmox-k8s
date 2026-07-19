@@ -1,0 +1,79 @@
+---
+# Bare-metal GPU host preparation. Runs ONLY on the k3s_gpu group and codifies
+# the manual bring-up a Proxmox VM would otherwise get "for free":
+#   1. Passwordless sudo for the ansible user (idempotent).
+#   2. Assert the NVIDIA driver is present - this role does NOT install it
+#      (kernel/version-sensitive; install a Blackwell-capable driver out of band).
+#   3. Install nvidia-container-toolkit so k3s auto-detects the `nvidia`
+#      containerd runtime when the agent is installed/restarted.
+#
+# NOTE: step 1 still needs sudo to already work for the FIRST connection. On a
+# brand-new host, run the workflow once with `-- --limit k3s_gpu --ask-become-pass`
+# (or pre-seed /etc/sudoers.d) so Ansible can escalate; after that it is idempotent.
+
+- name: Ensure passwordless sudo for the ansible user
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/90-{{ ansible_user }}-nopasswd"
+    mode: "0440"
+    owner: root
+    group: root
+    content: "{{ ansible_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    validate: "visudo -cf %s"
+
+- name: Check for the NVIDIA driver (nvidia-smi)
+  ansible.builtin.command: nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
+  register: _nvidia_smi
+  changed_when: false
+  failed_when: false
+
+- name: Fail early if the NVIDIA driver is not installed
+  ansible.builtin.fail:
+    msg: >-
+      nvidia-smi failed on {{ inventory_hostname }} (rc={{ _nvidia_smi.rc }}).
+      This role intentionally does not install the GPU driver because it is
+      kernel/version-sensitive. Install a Blackwell-capable NVIDIA driver on the
+      host, confirm `nvidia-smi` works, then re-run this workflow.
+  when: _nvidia_smi.rc != 0
+
+- name: Show the detected GPU(s) and driver version
+  ansible.builtin.debug:
+    msg: "Detected GPU(s): {{ _nvidia_smi.stdout_lines }}"
+  when: _nvidia_smi.rc == 0
+
+- name: Check whether k3s-agent is already installed (for the toolkit handler)
+  ansible.builtin.stat:
+    path: /etc/systemd/system/k3s-agent.service
+  register: k3s_agent_unit
+
+- name: Install the NVIDIA container toolkit repository GPG key
+  ansible.builtin.get_url:
+    url: https://nvidia.github.io/libnvidia-container/gpgkey
+    dest: /usr/share/keyrings/nvidia-container-toolkit-keyring.asc
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Add the NVIDIA container toolkit APT repository
+  # apt expands $(ARCH) at runtime, so this works on amd64/arm64 hosts alike.
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    mode: "0644"
+    owner: root
+    group: root
+    content: >-
+      deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.asc]
+      https://nvidia.github.io/libnvidia-container/stable/deb/$(ARCH) /
+  register: _nvidia_toolkit_repo
+
+- name: Refresh APT cache after adding the NVIDIA repository
+  ansible.builtin.apt:
+    update_cache: true
+  when: _nvidia_toolkit_repo is changed
+
+- name: Install nvidia-container-toolkit
+  ansible.builtin.apt:
+    name: nvidia-container-toolkit
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  notify: Restart k3s-agent to pick up the nvidia runtime

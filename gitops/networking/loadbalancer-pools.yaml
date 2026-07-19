@@ -1,0 +1,55 @@
+# Cilium LoadBalancer IPAM + L2 announcement for the GitOps-managed services.
+# Cluster-scoped Cilium CRDs; each pool/policy targets one Service by its app
+# label so the assignments stay independent (Argo CD, filament, Hubble, vLLM
+# each own their own pool elsewhere).
+#
+# IP map on 10.10.1.0/24: .240 filament, .241 hubble, .242 vLLM, .243 open-webui,
+# .244 argocd, .245 grafana.
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: open-webui-lb-pool
+spec:
+  blocks:
+    - start: "10.10.1.243"
+      stop: "10.10.1.243"
+  serviceSelector:
+    matchLabels:
+      app.kubernetes.io/name: open-webui
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: open-webui-lb-pool
+spec:
+  serviceSelector:
+    matchLabels:
+      app.kubernetes.io/name: open-webui
+  interfaces:
+    - "^eth0$"
+  loadBalancerIPs: true
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: grafana-lb-pool
+spec:
+  blocks:
+    - start: "10.10.1.245"
+      stop: "10.10.1.245"
+  serviceSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: grafana-lb-pool
+spec:
+  serviceSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  interfaces:
+    - "^eth0$"
+  loadBalancerIPs: true

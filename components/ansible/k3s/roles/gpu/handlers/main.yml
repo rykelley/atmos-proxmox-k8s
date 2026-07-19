@@ -1,0 +1,10 @@
+---
+# Only restart k3s-agent if it is ALREADY installed (i.e. the toolkit was added
+# after the node had joined). On first bring-up the toolkit is installed before
+# the agent, so k3s auto-detects the `nvidia` runtime on its initial start and no
+# restart is needed.
+- name: Restart k3s-agent to pick up the nvidia runtime
+  ansible.builtin.systemd:
+    name: k3s-agent
+    state: restarted
+  when: k3s_agent_unit.stat.exists | default(false)

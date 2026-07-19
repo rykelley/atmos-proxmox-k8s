@@ -1,0 +1,23 @@
+# GPU embeddings server (vLLM embed mode) - raw manifests in gitops/embeddings/.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: embeddings
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/rykelley/atmos-proxmox-k8s.git
+    targetRevision: main
+    path: gitops/embeddings
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rag
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

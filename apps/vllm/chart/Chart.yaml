@@ -1,0 +1,6 @@
+apiVersion: v2
+name: vllm
+description: vLLM OpenAI-compatible inference server for the bare-metal Blackwell GPU node, exposed via a Cilium L2 LoadBalancer.
+type: application
+version: 0.1.0
+appVersion: "0.11.0"

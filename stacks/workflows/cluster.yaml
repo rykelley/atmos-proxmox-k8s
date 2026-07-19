@@ -34,9 +34,70 @@ workflows:
         # this must come after it.
         command: helmfile apply hubble-ui -s prod -- --skip-diff-on-install
 
+  setup-gpu-os:
+    description: "Bare-metal GPU host bring-up via Ansible only (no Terraform): common OS prep, passwordless sudo, NVIDIA driver check, nvidia-container-toolkit, then join k3s. Scoped to the k3s_gpu group."
+    steps:
+      # --limit k3s_gpu scopes every play to the GPU node: Common OS prep, the
+      # GPU host role, and the agent join all run; the server/kube-vip/kubeconfig
+      # plays have no hosts under the limit and are skipped. This is the ansible
+      # analogue of `deploy-cluster` (which uses Terraform to build the VM OS).
+      #
+      # First-time bring-up on a host without passwordless sudo: append
+      # `--ask-become-pass` here once (see roles/gpu tasks).
+      - name: prepare-gpu-host
+        command: ansible playbook k3s -s prod -- --limit k3s_gpu
+
+  deploy-gpu:
+    description: "Join the bare-metal GPU node (tainted agent), install the NVIDIA GPU Operator, then deploy vLLM."
+    steps:
+      # Idempotent full playbook: joins/labels/taints the GPU agent. The k3s
+      # install tasks are guarded by `creates:` so existing nodes are untouched.
+      - name: join-gpu-node
+        command: ansible playbook k3s -s prod
+      - name: deploy-gpu-operator
+        # --skip-diff-on-install: the operator installs its own CRDs
+        # (ClusterPolicy/NodeFeatureDiscovery) in the same apply.
+        command: helmfile apply gpu-operator -s prod -- --skip-diff-on-install
+      - name: deploy-vllm
+        command: helmfile apply vllm -s prod -- --skip-diff-on-install
+
+  deploy-rag:
+    description: "GitOps RAG platform: enable GPU time-slicing, bootstrap Argo CD, then let it sync Open WebUI + Qdrant + embeddings + monitoring."
+    steps:
+      # Re-apply gpu-operator (time-slicing) + vLLM (lowered VRAM) so the GPU is
+      # shareable before the embeddings pod also claims a slice.
+      - name: apply-gpu-timeslicing
+        command: helmfile apply gpu-operator -s prod -- --skip-diff-on-install
+      - name: reapply-vllm
+        command: helmfile apply vllm -s prod -- --skip-diff-on-install
+      - name: bootstrap-argocd
+        command: helmfile apply argocd -s prod -- --skip-diff-on-install
+      - name: apply-root-app
+        # Hands control to Argo CD: it reconciles everything under gitops/apps/.
+        # NOTE: for a private repo, register repo credentials in Argo CD first
+        # (see README) or make the repo public.
+        type: shell
+        command: |
+          KUBECONFIG="${HOME}/.kube/atmos-k3s.yaml" kubectl apply -f gitops/root-app.yaml
+
   destroy-cluster:
     description: "Tear down the cluster in reverse order (removes the VMs)."
     steps:
+      - name: destroy-rag-apps
+        # Deleting the root Application cascades (via finalizer) to the RAG +
+        # monitoring apps Argo manages. Best-effort.
+        type: shell
+        command: |
+          KUBECONFIG="${HOME}/.kube/atmos-k3s.yaml" kubectl delete -f gitops/root-app.yaml --ignore-not-found --wait=false || true
+      - name: destroy-argocd
+        command: helmfile destroy argocd -s prod
+        # Best-effort: the cluster may already be gone.
+      - name: destroy-vllm
+        command: helmfile destroy vllm -s prod
+        # Best-effort: the cluster may already be gone.
+      - name: destroy-gpu-operator
+        command: helmfile destroy gpu-operator -s prod
+        # Best-effort: the cluster may already be gone.
       - name: destroy-hubble-ui
         command: helmfile destroy hubble-ui -s prod
         # Best-effort: the cluster may already be gone.

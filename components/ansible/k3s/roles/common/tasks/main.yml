@@ -5,7 +5,6 @@
       - curl
       - ca-certificates
       - gnupg
-      - qemu-guest-agent
       - open-iscsi
       - nfs-common
       - apparmor
@@ -14,11 +13,20 @@
     update_cache: true
     cache_valid_time: 3600
 
+# qemu-guest-agent only makes sense on Proxmox VMs. Bare-metal nodes (e.g. the
+# GPU box) set is_vm=false in inventory so this is skipped there.
+- name: Ensure qemu-guest-agent is present on VMs
+  ansible.builtin.apt:
+    name: qemu-guest-agent
+    state: present
+  when: is_vm | default(true)
+
 - name: Enable qemu-guest-agent
   ansible.builtin.systemd:
     name: qemu-guest-agent
     enabled: true
     state: started
+  when: is_vm | default(true)
 
 - name: Disable swap immediately
   ansible.builtin.command: swapoff -a

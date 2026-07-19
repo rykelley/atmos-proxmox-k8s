@@ -1,0 +1,32 @@
+# Qdrant vector database - stores the RAG document embeddings.
+# ClusterIP only (reached in-cluster by Open WebUI at http://qdrant.rag:6333).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: qdrant
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://qdrant.github.io/qdrant-helm
+    chart: qdrant
+    targetRevision: 1.18.2
+    helm:
+      values: |
+        replicaCount: 1
+        service:
+          type: ClusterIP
+        persistence:
+          size: 10Gi
+          # Uses the default k3s local-path StorageClass when unset.
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rag
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

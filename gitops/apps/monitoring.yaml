@@ -1,0 +1,77 @@
+# kube-prometheus-stack: Prometheus + Grafana + Alertmanager.
+# Grafana is exposed on 10.10.1.245 (pool in gitops/networking) and ships the
+# NVIDIA DCGM dashboard; Prometheus scrapes the GPU Operator's DCGM exporter.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 87.17.0
+    helm:
+      values: |
+        grafana:
+          service:
+            type: LoadBalancer
+            annotations:
+              io.cilium/lb-ipam-ips: "10.10.1.245"
+          # Anonymous view access keeps LAN browsing simple; admin login still
+          # works (password in the grafana secret).
+          grafana.ini:
+            auth.anonymous:
+              enabled: true
+              org_role: Viewer
+          dashboardProviders:
+            dashboardproviders.yaml:
+              apiVersion: 1
+              providers:
+                - name: default
+                  orgId: 1
+                  folder: ""
+                  type: file
+                  disableDeletion: false
+                  editable: true
+                  options:
+                    path: /var/lib/grafana/dashboards/default
+          dashboards:
+            default:
+              nvidia-dcgm:
+                # NVIDIA DCGM Exporter dashboard (grafana.com/dashboards/12239)
+                gnetId: 12239
+                revision: 2
+                datasource: Prometheus
+        prometheus:
+          prometheusSpec:
+            retention: 7d
+            # Watch ServiceMonitors/PodMonitors in every namespace, not just
+            # those carrying the Helm release label.
+            serviceMonitorSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: false
+          additionalServiceMonitors:
+            - name: dcgm-exporter
+              namespaceSelector:
+                matchNames:
+                  - gpu-operator
+              selector:
+                matchLabels:
+                  app: nvidia-dcgm-exporter
+              endpoints:
+                - port: gpu-metrics
+                  interval: 15s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # kube-prometheus-stack CRDs are too large for client-side apply.
+      - ServerSideApply=true

@@ -1,0 +1,149 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "vllm.labels" (dict "name" "vllm" "component" "inference" "root" $) | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  # Model reload is expensive; avoid two pods fighting over the single GPU.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "vllm.selectorLabels" (dict "name" "vllm") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vllm.labels" (dict "name" "vllm" "component" "inference" "root" $) | nindent 8 }}
+    spec:
+      # k3s auto-detects the host nvidia-container-runtime and exposes it as the
+      # `nvidia` RuntimeClass; this gives the container GPU access.
+      runtimeClassName: nvidia
+      # Kubernetes injects a `VLLM_PORT=tcp://<clusterIP>:8000` env var for the
+      # `vllm` Service, which vLLM misreads as its own VLLM_PORT config and
+      # crashes ("appears to be a URI"). Disabling service links stops that
+      # injection entirely.
+      enableServiceLinks: false
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: vllm
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "--model"
+            - {{ .Values.model.name | quote }}
+            - "--max-model-len"
+            - {{ .Values.model.maxModelLen | quote }}
+            - "--gpu-memory-utilization"
+            - {{ .Values.model.gpuMemoryUtilization | quote }}
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - {{ .Values.service.port | quote }}
+            {{- with .Values.model.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: HF_HOME
+              value: /root/.cache/huggingface
+            {{- with .Values.hfTokenSecret }}
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: HF_TOKEN
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          resources:
+            requests:
+              cpu: {{ .Values.resources.requests.cpu | quote }}
+              memory: {{ .Values.resources.requests.memory | quote }}
+              nvidia.com/gpu: {{ .Values.gpu.count }}
+            limits:
+              cpu: {{ .Values.resources.limits.cpu | quote }}
+              memory: {{ .Values.resources.limits.memory | quote }}
+              nvidia.com/gpu: {{ .Values.gpu.count }}
+          # Model download + load can take several minutes on first start, so the
+          # startup probe is generous before liveness/readiness kick in.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 15
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+          volumeMounts:
+            - name: model-cache
+              mountPath: /root/.cache/huggingface
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.shmSize | quote }}
+        - name: model-cache
+          {{- if eq (include "vllm.persistModelCache" .) "true" }}
+          persistentVolumeClaim:
+            claimName: vllm-model-cache
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if eq (include "vllm.persistModelCache" .) "true" }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vllm-model-cache
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "vllm.labels" (dict "name" "vllm" "component" "inference" "root" $) | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.modelCache.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.modelCache.size | quote }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "vllm.labels" (dict "name" "vllm" "component" "inference" "root" $) | nindent 4 }}
+  annotations:
+    # Ask Cilium LB-IPAM for this specific address from the pool below.
+    io.cilium/lb-ipam-ips: {{ .Values.loadBalancer.ip | quote }}
+spec:
+  type: LoadBalancer
+  selector:
+    {{- include "vllm.selectorLabels" (dict "name" "vllm") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http

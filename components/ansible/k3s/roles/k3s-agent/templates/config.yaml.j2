@@ -2,3 +2,15 @@
 token: "{{ k3s_token }}"
 node-ip: "{{ k3s_node_ip }}"
 server: "https://{{ control_plane_vip }}:{{ api_port }}"
+{% if k3s_node_labels | default([]) | length > 0 %}
+node-label:
+{% for label in k3s_node_labels %}
+  - "{{ label }}"
+{% endfor %}
+{% endif %}
+{%- if k3s_node_taints | default([]) | length > 0 %}
+node-taint:
+{% for taint in k3s_node_taints %}
+  - "{{ taint }}"
+{% endfor %}
+{% endif %}
