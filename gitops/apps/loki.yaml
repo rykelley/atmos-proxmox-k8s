@@ -64,6 +64,16 @@ spec:
           enabled: false
         lokiCanary:
           enabled: false
+        # The chart's default chunksCache/resultsCache (memcached) sizing
+        # (~10Gi memory request) is built for large multi-tenant Loki
+        # deployments, not this single-node/filesystem homelab setup - it
+        # can't schedule on these nodes. Disable both; Loki works fine
+        # without them at this log volume, just slightly slower on repeat
+        # queries.
+        chunksCache:
+          enabled: false
+        resultsCache:
+          enabled: false
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
