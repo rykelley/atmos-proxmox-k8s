@@ -46,6 +46,15 @@ spec:
                 gnetId: 12239
                 revision: 2
                 datasource: Prometheus
+          # Loki (gitops/apps/loki.yaml) stores logs shipped by Alloy
+          # (gitops/apps/alloy.yaml). This adds a "Loki" datasource so
+          # Grafana Explore can query logs alongside Prometheus metrics.
+          additionalDataSources:
+            - name: Loki
+              type: loki
+              access: proxy
+              url: http://loki-gateway.monitoring.svc.cluster.local
+              isDefault: false
         prometheus:
           prometheusSpec:
             retention: 7d

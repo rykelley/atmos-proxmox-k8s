@@ -86,9 +86,9 @@ apps/
   filament-tracker/               # app source: services/, web/, chart/
   hubble-ui-gateway/              # Gateway + HTTPRoute for Hubble UI
   vllm/                           # vLLM Helm chart (Deployment + LB Service + Cilium LB pool)
-gitops/                           # Argo CD app-of-apps (RAG platform + monitoring)
+gitops/                           # Argo CD app-of-apps (RAG platform + monitoring + logging)
   root-app.yaml                   # app-of-apps root Application
-  apps/                           # child Applications (monitoring, qdrant, embeddings, open-webui, networking)
+  apps/                           # child Applications (monitoring, loki, alloy, qdrant, embeddings, open-webui, networking)
   networking/                     # Cilium LB pools for open-webui + grafana
   embeddings/                     # GPU embeddings server (vLLM embed mode) manifests
 stacks/
@@ -396,10 +396,12 @@ Components:
 | --- | --- | --- |
 | Open WebUI | `10.10.1.243` | Chat UI + RAG document upload |
 | Argo CD | `10.10.1.244` | GitOps engine / sync dashboard |
-| Grafana | `10.10.1.245` | GPU + cluster dashboards (NVIDIA DCGM) |
+| Grafana | `10.10.1.245` | GPU + cluster dashboards (NVIDIA DCGM), logs (Loki) |
 | vLLM (chat) | `10.10.1.242` | OpenAI-compatible chat completions |
 | Qdrant | in-cluster | Vector database (embeddings store) |
 | embeddings | in-cluster | vLLM embed-mode (`BAAI/bge-base-en-v1.5`) |
+| Loki | in-cluster | Log storage + query engine (filesystem-backed) |
+| Grafana Alloy | in-cluster (DaemonSet) | Ships every pod's logs to Loki |
 
 ```mermaid
 flowchart LR
@@ -409,9 +411,11 @@ flowchart LR
   owui -->|vectors| qdrant["Qdrant"]
   vllm --> gpu["Blackwell GPU (time-sliced)"]
   emb --> gpu
-  argocd["Argo CD :244"] -->|app-of-apps| owui & qdrant & emb & mon["kube-prometheus-stack"]
+  argocd["Argo CD :244"] -->|app-of-apps| owui & qdrant & emb & mon["kube-prometheus-stack"] & loki["Loki"] & alloy["Alloy (DaemonSet)"]
   dcgm["DCGM exporter"] --> mon
+  alloy -->|every pod's logs| loki
   mon --> grafana["Grafana :245"]
+  loki -->|Loki datasource| grafana
 ```
 
 ### GPU time-slicing
@@ -491,6 +495,34 @@ kubectl -n rag get pods -o wide
    Qdrant, retrieves the relevant chunks, and grounds vLLM's answer on them.
 4. Watch **`http://10.10.1.245`** (Grafana -> NVIDIA DCGM dashboard) - GPU
    utilization and memory spike during inference.
+
+### Logs (Loki + Grafana Alloy)
+
+Every pod's logs across the whole cluster - not just the RAG namespace - are
+shipped to **Loki** by **Grafana Alloy**
+([gitops/apps/alloy.yaml](gitops/apps/alloy.yaml),
+[gitops/apps/loki.yaml](gitops/apps/loki.yaml)) and queryable from Grafana
+alongside metrics, so you don't need `kubectl logs` to debug what happened:
+
+1. Open **`http://10.10.1.245`** -> **Explore** -> pick the **Loki**
+   datasource.
+2. Query with [LogQL](https://grafana.com/docs/loki/latest/query/), e.g.:
+
+   ```logql
+   {namespace="vllm"}
+   {namespace="rag", pod=~"embeddings.*"} |= "error"
+   {namespace="gpu-operator"} | logfmt
+   ```
+
+3. Or from the CLI, the same log store answers via `logcli` /
+   `curl http://loki-gateway.monitoring.svc.cluster.local/loki/api/v1/query_range`
+   from inside the cluster.
+
+Alloy runs as a DaemonSet and discovers pods via the Kubernetes API
+(`discovery.kubernetes` + `loki.source.kubernetes` - no privileged hostPath
+mount needed). Loki runs in `SingleBinary` mode with a 10Gi filesystem-backed
+PVC and a 7-day retention (`loki.limits_config.retention_period`) - sized for
+learning/homelab volume, not production log scale.
 
 ### GitOps loop
 
