@@ -161,6 +161,13 @@ components:
         # Leave VRAM headroom for the time-sliced embeddings model on the same
         # GPU (time-slicing shares memory). Raise toward 0.9 if vLLM runs alone.
         vllm_gpu_memory_utilization: "0.55"
+        # Extra raw args for the vLLM server. These enable native OpenAI function
+        # calling (tool_choice=auto) so Open WebUI's "chat with your cluster" tool
+        # server works; the hermes parser matches Qwen2.5's tool-call format.
+        vllm_extra_args:
+          - "--enable-auto-tool-choice"
+          - "--tool-call-parser"
+          - "hermes"
         # OpenAI-compatible API served on a dedicated Cilium L2 LoadBalancer IP,
         # clear of the filament gateway (.240) and Hubble UI (.241).
         vllm_lb_ip: "10.10.1.242"

@@ -24,6 +24,14 @@ releases:
           name: {{ .Values.vllm_model | default "Qwen/Qwen2.5-3B-Instruct" | quote }}
           maxModelLen: {{ .Values.vllm_max_model_len | default 8192 }}
           gpuMemoryUtilization: {{ .Values.vllm_gpu_memory_utilization | default "0.90" | quote }}
+          # Extra raw args for the vLLM server. Defaults enable native OpenAI
+          # function calling (tool_choice=auto), which Open WebUI relies on for the
+          # "chat with your cluster" tool server; the hermes parser matches Qwen2.5.
+          # Override via the `vllm_extra_args` stack var if needed.
+          extraArgs:
+            {{- range ($.Values.vllm_extra_args | default (list "--enable-auto-tool-choice" "--tool-call-parser" "hermes")) }}
+            - {{ . | quote }}
+            {{- end }}
         modelCache:
           size: {{ .Values.vllm_model_cache_size | default "30Gi" | quote }}
         hfTokenSecret: {{ .Values.vllm_hf_token_secret | default "" | quote }}
