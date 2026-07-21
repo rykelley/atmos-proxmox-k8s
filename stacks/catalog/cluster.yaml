@@ -113,7 +113,10 @@ components:
         argocd_chart_version: "10.1.4"
         # Argo CD web UI on a dedicated Cilium L2 LoadBalancer IP.
         argocd_lb_ip: "10.10.1.244"
-        argocd_lb_interface: "eth0"
+        # Match the LAN NIC on any elected announcer: VMs use eth0, the bare-metal
+        # GPU node (k3s-gpu1) uses eno1. Matching only eth0 would leave the VIP dark
+        # if Cilium elected the GPU node as announcer.
+        argocd_lb_interface: "(eth0|eno1)"
 
     gpu-operator:
       metadata:
@@ -171,7 +174,11 @@ components:
         # OpenAI-compatible API served on a dedicated Cilium L2 LoadBalancer IP,
         # clear of the filament gateway (.240) and Hubble UI (.241).
         vllm_lb_ip: "10.10.1.242"
-        vllm_lb_interface: "eth0"
+        # L2-announce interface regex. Must match the LAN NIC on WHICHEVER node
+        # Cilium elects as the announcer: the Proxmox VMs use eth0, but the
+        # bare-metal GPU box (k3s-gpu1) uses eno1. If this only matched eth0 and
+        # the GPU node got elected, the VIP would be unreachable (no ARP replies).
+        vllm_lb_interface: "(eth0|eno1)"
         # Persist the HuggingFace model cache across pod restarts (0 = emptyDir).
         vllm_model_cache_size: "30Gi"
         # Optional: name of a pre-created Secret with a HF_TOKEN key for gated
@@ -248,7 +255,9 @@ components:
         # so a wide .240-.250 block here would disable those dedicated pools.
         gateway_lb_start: "10.10.1.240"
         gateway_lb_stop: "10.10.1.241"
-        gateway_interface: "eth0"
+        # Match the LAN NIC on any elected announcer: VMs use eth0, the bare-metal
+        # GPU node (k3s-gpu1) uses eno1. See vllm_lb_interface for the full rationale.
+        gateway_interface: "(eth0|eno1)"
         # --- Network policy ---
         network_policy_enabled: true
         # Supabase's direct host (db.<ref>.supabase.co) is IPv6-only, which the

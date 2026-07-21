@@ -27,7 +27,10 @@ spec:
     matchLabels:
       app.kubernetes.io/name: open-webui
   interfaces:
-    - "^eth0$"
+    # Match the LAN NIC on any elected announcer: Proxmox VMs use eth0, the
+    # bare-metal GPU node (k3s-gpu1) uses eno1. Matching only eth0 would leave
+    # the VIP unreachable if Cilium elected the GPU node as the announcer.
+    - "^(eth0|eno1)$"
   loadBalancerIPs: true
 ---
 apiVersion: cilium.io/v2alpha1
@@ -51,5 +54,6 @@ spec:
     matchLabels:
       app.kubernetes.io/name: grafana
   interfaces:
-    - "^eth0$"
+    # See open-webui above: match eth0 (VMs) or eno1 (bare-metal GPU node).
+    - "^(eth0|eno1)$"
   loadBalancerIPs: true
