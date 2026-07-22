@@ -88,9 +88,10 @@ apps/
   vllm/                           # vLLM Helm chart (Deployment + LB Service + Cilium LB pool)
 gitops/                           # Argo CD app-of-apps (RAG platform + monitoring + logging)
   root-app.yaml                   # app-of-apps root Application
-  apps/                           # child Applications (monitoring, loki, alloy, qdrant, embeddings, open-webui, networking, cluster-tools)
-  networking/                     # Cilium LB pools for open-webui + grafana
+  apps/                           # child Applications (monitoring, monitoring-dashboards, loki, alloy, qdrant, embeddings, open-webui, networking, cluster-tools)
+  networking/                     # Cilium LB pools for open-webui + grafana (L2-announced on eth0|eno1)
   embeddings/                     # GPU embeddings server (vLLM embed mode) manifests
+  monitoring-dashboards/          # custom Grafana dashboards as sidecar ConfigMaps (GPU + vLLM Overview)
   cluster-tools/                  # read-only OpenAPI tool server ("chat with your cluster")
 stacks/
   catalog/cluster.yaml            # single source of truth (nodes, VIP, CIDRs, Proxmox params)
@@ -540,6 +541,18 @@ false` means Prometheus watches every namespace). Grafana ships the community
 [vLLM dashboard](https://grafana.com/grafana/dashboards/23991-vllm/)
 (`gnetId: 23991`) alongside the NVIDIA DCGM one.
 
+On top of those, a purpose-built **GPU + vLLM Overview** dashboard ties the
+whole stack together on one board: GPU health (DCGM utilization / VRAM / power /
+temp), vLLM throughput / queue / KV-cache, time-to-first-token and end-to-end
+latency percentiles, GPU-handle allocation per node (the time-slicing/sharing
+story), tokens/sec per pod, and a Loki logs panel for vLLM/RAG errors. It is
+delivered GitOps-style as a `grafana_dashboard=1` ConfigMap
+([gitops/monitoring-dashboards/gpu-vllm-overview.yaml](gitops/monitoring-dashboards/gpu-vllm-overview.yaml),
+synced by [gitops/apps/monitoring-dashboards.yaml](gitops/apps/monitoring-dashboards.yaml))
+that Grafana's dashboard sidecar auto-imports - no Helm values edit needed. Its
+panels bind to `DS_PROMETHEUS`/`DS_LOKI` datasource variables so they attach to
+the default datasources rather than hard-coded UIDs.
+
 Useful PromQL to know the answer to "how many concurrent users can this GPU
 serve":
 
@@ -566,6 +579,15 @@ One-time setup in Open WebUI (admin account):
 2. URL: `http://cluster-tools.rag.svc.cluster.local:8000` - make sure it's
    `http://`, not the pre-filled `https://`.
 3. Save. In a chat, open the **+** menu and enable the cluster tools.
+
+> **Native function calling must be enabled on vLLM.** Open WebUI sends
+> `tool_choice=auto`, which vLLM rejects unless it was started with
+> `--enable-auto-tool-choice` and a `--tool-call-parser` (`hermes` for Qwen2.5).
+> These are set via `vllm_extra_args` in
+> [stacks/catalog/cluster.yaml](stacks/catalog/cluster.yaml); without them the
+> chat errors with *"auto tool choice requires ..."*. Also note tools are
+> per-conversation - start a **new** chat after enabling them (an old chat that
+> errored will keep replaying its stored error).
 
 Then ask things like:
 
@@ -651,6 +673,30 @@ core GitOps workflow this layer is meant to teach.
   embeddings pod is Ready and that `RAG_EMBEDDING_MODEL` in
   [gitops/apps/open-webui.yaml](gitops/apps/open-webui.yaml) matches the model
   the embeddings server lists at `/v1/models`.
+
+- **A LoadBalancer VIP is reachable in-cluster but dark from the LAN (curl to
+  `10.10.1.24x` times out, but the pod/Service/endpoints are healthy):** Cilium
+  can elect *any* node as the L2 announcer for a VIP, but the announcer must have
+  a NIC matching the `CiliumL2AnnouncementPolicy` `interfaces` regex or it sends
+  no ARP replies. The Proxmox VMs name their LAN NIC `eth0`, but the bare-metal
+  GPU box (`k3s-gpu1`) uses `eno1` - so a policy matching only `^eth0$` goes dark
+  whenever the GPU node is elected. All policies here use `^(eth0|eno1)$` for this
+  reason (`vllm_lb_interface` / `argocd_lb_interface` / `gateway_interface` in
+  [stacks/catalog/cluster.yaml](stacks/catalog/cluster.yaml), and the pools in
+  [gitops/networking/loadbalancer-pools.yaml](gitops/networking/loadbalancer-pools.yaml)).
+  Check the elected announcer and its interface with:
+
+  ```bash
+  kubectl -n kube-system get leases | grep l2announce   # which node holds the VIP
+  kubectl get ciliuml2announcementpolicies -o custom-columns=NAME:.metadata.name,IFACE:.spec.interfaces
+  ```
+
+- **Grafana admin login fails ("invalid password" / "user not found"):** the only
+  account is the built-in `admin` (not your email); anonymous **Viewer** access
+  still works for browsing. Get the password from the chart-managed secret with
+  `kubectl -n monitoring get secret monitoring-grafana -o jsonpath='{.data.admin-password}' | base64 -d`.
+  Do **not** change it in the UI - kube-prometheus-stack re-applies the secret on
+  restart and reverts it.
 
 ## Teardown
 
