@@ -1,0 +1,27 @@
+# Custom Grafana dashboards delivered as sidecar-labeled ConfigMaps.
+# Kept separate from the monitoring (kube-prometheus-stack) Application so
+# dashboard JSON lives in plain files rather than inline Helm values. The
+# grafana-sc-dashboard sidecar (NAMESPACE=ALL, label grafana_dashboard=1)
+# auto-imports anything synced here into Grafana.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring-dashboards
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/rykelley/atmos-proxmox-k8s.git
+    targetRevision: main
+    path: gitops/monitoring-dashboards
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,181 @@
+# Consolidated "GPU + vLLM Overview" Grafana dashboard.
+#
+# Delivered as a ConfigMap labeled grafana_dashboard=1 so kube-prometheus-stack's
+# Grafana dashboard sidecar (grafana-sc-dashboard, watching NAMESPACE=ALL) auto-
+# imports it - no Helm values edit needed. Panels use dashboard-level datasource
+# template variables (DS_PROMETHEUS / DS_LOKI) so they bind to whatever the
+# default Prometheus/Loki datasources are, rather than hard-coded UIDs.
+#
+# Metrics used are confirmed present in this cluster:
+#   DCGM_FI_DEV_GPU_UTIL / FB_USED / FB_FREE / POWER_USAGE / GPU_TEMP  (GPU)
+#   vllm:generation_tokens_total, num_requests_running/waiting,
+#   kv_cache_usage_perc, time_to_first_token_seconds_*, e2e_request_latency_*
+#   kube_pod_container_resource_requests{resource="nvidia_com_gpu"}      (sharing)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gpu-vllm-overview-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/name: gpu-vllm-overview-dashboard
+    app.kubernetes.io/part-of: monitoring
+data:
+  gpu-vllm-overview.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "graphTooltip": 1,
+      "time": {"from": "now-1h", "to": "now"},
+      "refresh": "10s",
+      "schemaVersion": 39,
+      "tags": ["gpu", "vllm", "nvidia"],
+      "title": "GPU + vLLM Overview",
+      "uid": "gpu-vllm-overview",
+      "templating": {
+        "list": [
+          {
+            "name": "DS_PROMETHEUS",
+            "type": "datasource",
+            "query": "prometheus",
+            "label": "Prometheus",
+            "current": {},
+            "hide": 0,
+            "refresh": 1
+          },
+          {
+            "name": "DS_LOKI",
+            "type": "datasource",
+            "query": "loki",
+            "label": "Loki",
+            "current": {},
+            "hide": 0,
+            "refresh": 1
+          }
+        ]
+      },
+      "panels": [
+        {"type": "row", "title": "GPU Health (DCGM)", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}, "id": 1},
+        {
+          "type": "timeseries",
+          "title": "GPU Utilization %",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 1},
+          "id": 2,
+          "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}, "overrides": []},
+          "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "DCGM_FI_DEV_GPU_UTIL", "legendFormat": "gpu {{gpu}}"}]
+        },
+        {
+          "type": "gauge",
+          "title": "VRAM Used %",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "gridPos": {"h": 8, "w": 4, "x": 8, "y": 1},
+          "id": 3,
+          "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 80}, {"color": "red", "value": 95}]}}, "overrides": []},
+          "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "DCGM_FI_DEV_FB_USED / (DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE) * 100", "legendFormat": "gpu {{gpu}}"}]
+        },
+        {
+          "type": "timeseries",
+          "title": "GPU Power (W)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "gridPos": {"h": 8, "w": 6, "x": 12, "y": 1},
+          "id": 4,
+          "fieldConfig": {"defaults": {"unit": "watt"}, "overrides": []},
+          "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "DCGM_FI_DEV_POWER_USAGE", "legendFormat": "gpu {{gpu}}"}]
+        },
+        {
+          "type": "stat",
+          "title": "GPU Temp (C)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "gridPos": {"h": 8, "w": 6, "x": 18, "y": 1},
+          "id": 5,
+          "fieldConfig": {"defaults": {"unit": "celsius", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 85}]}}, "overrides": []},
+          "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "DCGM_FI_DEV_GPU_TEMP", "legendFormat": "gpu {{gpu}}"}]
+        },
+        {"type": "row", "title": "vLLM Throughput & Load", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 9}, "id": 6},
+        {
+          "type": "timeseries",
+          "title": "Output tokens/sec",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 10},
+          "id": 7,
+          "fieldConfig": {"defaults": {"unit": "none"}, "overrides": []},
+          "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sum by (namespace) (rate(vllm:generation_tokens_total[1m]))", "legendFormat": "{{namespace}}"}]
+        },
+        {
+          "type": "timeseries",
+          "title": "Requests: running vs waiting",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 10},
+          "id": 8,
+          "fieldConfig": {"defaults": {"unit": "none"}, "overrides": []},
+          "targets": [
+            {"refId": "A", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sum by (namespace) (vllm:num_requests_running)", "legendFormat": "running {{namespace}}"},
+            {"refId": "B", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sum by (namespace) (vllm:num_requests_waiting)", "legendFormat": "waiting {{namespace}}"}
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "KV cache usage %",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 10},
+          "id": 9,
+          "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}, "overrides": []},
+          "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sum by (namespace) (vllm:kv_cache_usage_perc) * 100", "legendFormat": "{{namespace}}"}]
+        },
+        {"type": "row", "title": "vLLM Latency", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 18}, "id": 10},
+        {
+          "type": "timeseries",
+          "title": "Time to first token (p50/p95)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 19},
+          "id": 11,
+          "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+          "targets": [
+            {"refId": "A", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "histogram_quantile(0.50, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket[5m])))", "legendFormat": "p50"},
+            {"refId": "B", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket[5m])))", "legendFormat": "p95"}
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "End-to-end request latency (p50/p95)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 19},
+          "id": 12,
+          "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+          "targets": [
+            {"refId": "A", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "histogram_quantile(0.50, sum by (le) (rate(vllm:e2e_request_latency_seconds_bucket[5m])))", "legendFormat": "p50"},
+            {"refId": "B", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(vllm:e2e_request_latency_seconds_bucket[5m])))", "legendFormat": "p95"}
+          ]
+        },
+        {"type": "row", "title": "GPU Sharing / Tenancy", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 27}, "id": 13},
+        {
+          "type": "timeseries",
+          "title": "GPU handles requested per node",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+          "id": 14,
+          "fieldConfig": {"defaults": {"unit": "none"}, "overrides": []},
+          "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sum by (node) (kube_pod_container_resource_requests{resource=\"nvidia_com_gpu\"})", "legendFormat": "{{node}}"}]
+        },
+        {
+          "type": "timeseries",
+          "title": "Tokens/sec by pod (who is using the GPU)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+          "id": 15,
+          "fieldConfig": {"defaults": {"unit": "none"}, "overrides": []},
+          "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "expr": "sum by (namespace, pod) (rate(vllm:generation_tokens_total[1m]))", "legendFormat": "{{namespace}}/{{pod}}"}]
+        },
+        {"type": "row", "title": "Logs (Loki)", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 36}, "id": 16},
+        {
+          "type": "logs",
+          "title": "vLLM / RAG warnings and errors",
+          "datasource": {"type": "loki", "uid": "${DS_LOKI}"},
+          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 37},
+          "id": 17,
+          "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true},
+          "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "${DS_LOKI}"}, "expr": "{namespace=~\"vllm|rag\"} |~ \"(?i)error|warn|exception|traceback\""}]
+        }
+      ]
+    }
