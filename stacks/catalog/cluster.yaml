@@ -36,7 +36,10 @@ components:
         vm_defaults:
           cores: 2
           sockets: 1
-          memory: 4096
+          # 8 GiB (up from 4): the 6 worker/control VMs were memory-maxed once the
+          # RAG + monitoring stack landed. The bare-metal GPU node is separate and
+          # unaffected by this.
+          memory: 8192
           disk_size: 40
           cpu_type: "host"
           os_type: "l26"
