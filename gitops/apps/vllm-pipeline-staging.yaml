@@ -23,7 +23,7 @@ spec:
   source:
     repoURL: https://github.com/rykelley/atmos-proxmox-k8s.git
     # Kargo pins this to a Freight commit SHA on promotion (starts at main).
-    targetRevision: main
+    targetRevision: 0254b6b25e662c5bb45ea99c455234f5f20a892b
     path: apps/vllm-pipeline/chart
     helm:
       # Chart defaults (values.yaml) + the staging overlay, both read at the
