@@ -160,3 +160,29 @@ workflows:
         type: shell
         command: |
           bash scripts/register-cluster-b-argocd.sh
+
+  deploy-kargo:
+    description: "Install Kargo (+ cert-manager prereq) on cluster-A and bootstrap the vLLM promotion pipeline (Project/Warehouse/Stages). Promotes the model config from staging (cluster-A GPU canary) to prod (cluster-B CPU). Requires KARGO_ADMIN_* and KARGO_GIT_* in .env, and both clusters + Argo CD already up (deploy-rag, deploy-cluster-b, register-cluster-b)."
+    steps:
+      - name: deploy-cert-manager
+        command: helmfile apply cert-manager -s prod
+      - name: install-kargo
+        # --skip-diff-on-install: Kargo installs its own CRDs in the same apply.
+        command: helmfile apply kargo -s prod -- --skip-diff-on-install
+      - name: setup-project
+        type: shell
+        command: |
+          bash scripts/setup-kargo-project.sh
+
+  destroy-kargo:
+    description: "Remove the Kargo pipeline + Kargo + cert-manager from cluster-A (best-effort)."
+    steps:
+      - name: delete-pipeline
+        type: shell
+        command: |
+          KUBECONFIG="${HOME}/.kube/atmos-k3s.yaml" kubectl delete -f kargo/pipeline.yaml --ignore-not-found || true
+          KUBECONFIG="${HOME}/.kube/atmos-k3s.yaml" kubectl delete -f kargo/project.yaml --ignore-not-found || true
+      - name: destroy-kargo
+        command: helmfile destroy kargo -s prod
+      - name: destroy-cert-manager
+        command: helmfile destroy cert-manager -s prod

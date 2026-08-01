@@ -1,0 +1,52 @@
+# Kargo — multi-stage promotion orchestration on top of Argo CD (Phase 4).
+#
+# Installed on cluster-A (the hub) ONLY. Kargo watches the hub's Argo CD
+# Application resources and promotes the vLLM model pipeline from `staging`
+# (cluster-A, GPU canary) to `prod` (cluster-B, CPU) by pushing Git commits
+# that pin each stage's Application `targetRevision` to the verified Freight
+# commit. See kargo/ and stacks/workflows/cluster.yaml (deploy-kargo).
+#
+# Requires:
+#   - cert-manager (installed first; Kargo issues its API cert via it).
+#   - KARGO_ADMIN_PASSWORD_HASH + KARGO_ADMIN_TOKEN_SIGNING_KEY in the env
+#     (see .env.example for how to generate them).
+#
+# The chart is published to an OCI registry; Helmfile pulls it via `oci: true`.
+# Atmos passes stack `vars` as Helmfile state values (.Values.*).
+
+repositories:
+  - name: kargo
+    url: ghcr.io/akuity/kargo-charts
+    oci: true
+
+releases:
+  - name: kargo
+    namespace: {{ .Values.kargo_namespace | default "kargo" }}
+    chart: kargo/kargo
+    version: {{ .Values.kargo_chart_version | default "1.11.0" | quote }}
+    createNamespace: true
+    wait: true
+    timeout: 600
+    values:
+      - api:
+          adminAccount:
+            # Bcrypt hash + JWT signing key for the admin login. Sourced from the
+            # environment so no secret material lands in Git.
+            passwordHash: {{ requiredEnv "KARGO_ADMIN_PASSWORD_HASH" | quote }}
+            tokenSigningKey: {{ requiredEnv "KARGO_ADMIN_TOKEN_SIGNING_KEY" | quote }}
+          # Plain HTTP on the trusted LAN (mirrors Argo CD's insecure mode); the
+          # UI is reached via `kubectl -n kargo port-forward svc/kargo-api 8080:80`.
+          tls:
+            enabled: false
+          service:
+            type: ClusterIP
+      - controller:
+          argocd:
+            # Watch/factor Argo CD Application health into Stage health and enable
+            # the argocd-update promotion step. Argo CD lives in `argocd`.
+            integrationEnabled: true
+            namespace: {{ .Values.argocd_namespace | default "argocd" }}
+          rollouts:
+            # Reconcile Argo Rollouts AnalysisRuns so Kargo can verify the staging
+            # canary via an AnalysisTemplate (see kargo/pipeline.yaml).
+            integrationEnabled: true

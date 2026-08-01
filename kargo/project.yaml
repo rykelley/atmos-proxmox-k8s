@@ -1,0 +1,14 @@
+# Kargo Project for the vLLM model-promotion pipeline.
+#
+# A Project is cluster-scoped and, when reconciled, creates a same-named
+# namespace (vllm-promo) that holds all the pipeline's namespaced resources
+# (Warehouse, Stages, PromotionTasks, Promotions, AnalysisRuns, and the Git
+# credential Secret). We deliberately DON'T reuse the workload namespace
+# (vllm-pipeline) so Kargo's namespace ownership never fights Argo CD's.
+#
+# Applied first (and waited on) by scripts/setup-kargo-project.sh so the
+# namespace exists before kargo/pipeline.yaml lands.
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: vllm-promo

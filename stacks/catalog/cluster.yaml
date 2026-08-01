@@ -121,6 +121,40 @@ components:
         # if Cilium elected the GPU node as announcer.
         argocd_lb_interface: "(eth0|eno1)"
 
+    # --- Kargo (Phase 4: promote the vLLM model pipeline staging -> prod) ---
+    # cert-manager is a hard Kargo prerequisite (Kargo issues its API TLS cert
+    # via a cert-manager Issuer). Both live on cluster-A (the hub) only.
+    cert-manager:
+      metadata:
+        component: cert-manager
+      settings:
+        depends_on:
+          1:
+            component: cilium
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
+      vars:
+        cert_manager_namespace: "cert-manager"
+        cert_manager_chart_version: "v1.16.2"
+
+    kargo:
+      metadata:
+        component: kargo
+      settings:
+        depends_on:
+          1:
+            component: cert-manager
+          # Kargo's Argo CD integration expects Argo CD to already be running.
+          2:
+            component: argocd
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
+      vars:
+        kargo_namespace: "kargo"
+        kargo_chart_version: "1.11.0"
+        # Where Argo CD lives, so Kargo can watch its Applications.
+        argocd_namespace: "argocd"
+
     gpu-operator:
       metadata:
         component: gpu-operator

@@ -1,10 +1,12 @@
 # vLLM PROD (cluster-B, CPU) — the promotion TARGET of the Kargo pipeline.
 # A plain Deployment serving a tiny CPU model, exposed on the LAN at 10.10.1.246.
-# Kargo promotes by bumping image.tag / model here once the staging canary passes.
 #
-# Uses the official CPU image (vllm/vllm-openai-cpu), which auto-detects the CPU
-# platform. Sized for cluster-B's 8 GiB nodes: modest requests + a capped CPU
-# KV cache (VLLM_CPU_KVCACHE_SPACE) so weights + cache fit in RAM.
+# The stage-specific values live in apps/vllm-pipeline/chart/env/prod.yaml. Kargo
+# promotes by pinning `targetRevision` below to the SAME Freight commit the
+# staging canary verified, so prod deploys env/prod.yaml at that exact commit.
+#
+# The kargo.akuity.io/authorized-stage annotation consents to Kargo's `prod`
+# Stage (project vllm-promo) updating this Application via the argocd-update step.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -12,51 +14,21 @@ metadata:
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "5"
+    kargo.akuity.io/authorized-stage: vllm-promo:prod
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:
     repoURL: https://github.com/rykelley/atmos-proxmox-k8s.git
+    # Kargo pins this to a Freight commit SHA on promotion (starts at main).
     targetRevision: main
     path: apps/vllm-pipeline/chart
     helm:
-      values: |
-        namespace: vllm-pipeline
-        image:
-          # Official CPU build (auto-detects CPU platform). Kargo bumps this tag.
-          repository: vllm/vllm-openai-cpu
-          tag: "v0.26.0-x86_64"
-        model:
-          name: "Qwen/Qwen2.5-0.5B-Instruct"
-          maxModelLen: 2048
-        gpu:
-          enabled: false
-        replicas: 1
-        # Fits cluster-B's 2-core / 8 GiB nodes with headroom for kube-system.
-        resources:
-          requests:
-            cpu: "1"
-            memory: 3Gi
-          limits:
-            cpu: "2"
-            memory: 6Gi
-        # tmpfs /dev/shm counts against pod memory; keep it small on CPU.
-        shmSize: 1Gi
-        # Cap the CPU KV cache (GiB) so weights + cache stay within the limit.
-        extraEnv:
-          - name: VLLM_CPU_KVCACHE_SPACE
-            value: "2"
-        service:
-          type: LoadBalancer
-        loadBalancer:
-          enabled: true
-          ip: "10.10.1.246"
-          interface: "eth0"
-        rollout:
-          enabled: false
-        analysis:
-          enabled: false
+      # Chart defaults (values.yaml) + the prod overlay, both read at the pinned
+      # targetRevision.
+      valueFiles:
+        - env/prod.yaml
   destination:
     # Registered by scripts/register-cluster-b-argocd.sh (Phase 2).
     name: cluster-b

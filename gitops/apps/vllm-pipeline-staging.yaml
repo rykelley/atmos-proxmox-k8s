@@ -1,11 +1,13 @@
 # vLLM STAGING (cluster-A, GPU) — the canary side of the Kargo pipeline.
 # Renders an Argo Rollouts Rollout with a Prometheus-gated canary.
 #
-# VRAM math (16 GB, time-sliced/shared): the existing Helmfile vLLM (3B @ 0.55 ≈
-# 8.8 GB) + embeddings (0.20 ≈ 3.2 GB) leave only ~4 GB free. A canary briefly
-# runs TWO pods, so staging must be tiny: Qwen2.5-0.5B at 0.15 util (~2.4 GB/pod)
-# keeps both stable+canary inside the free VRAM. A 1.5B model does NOT fit here
-# (weights alone exceed the budget -> "No available memory for the cache blocks").
+# The stage-specific values live in apps/vllm-pipeline/chart/env/staging.yaml
+# (the promotable unit the Kargo Warehouse watches). `targetRevision` starts at
+# `main`; once you begin promoting, Kargo pins it to the verified Freight commit
+# by pushing a small commit that rewrites the field below.
+#
+# The kargo.akuity.io/authorized-stage annotation consents to Kargo's `staging`
+# Stage (project vllm-promo) updating this Application via the argocd-update step.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -13,32 +15,21 @@ metadata:
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "5"
+    kargo.akuity.io/authorized-stage: vllm-promo:staging
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:
     repoURL: https://github.com/rykelley/atmos-proxmox-k8s.git
+    # Kargo pins this to a Freight commit SHA on promotion (starts at main).
     targetRevision: main
     path: apps/vllm-pipeline/chart
     helm:
-      values: |
-        namespace: vllm-pipeline
-        image:
-          repository: vllm/vllm-openai
-          tag: "v0.11.0"
-        model:
-          name: "Qwen/Qwen2.5-0.5B-Instruct"
-          maxModelLen: 2048
-          gpuMemoryUtilization: "0.15"
-        gpu:
-          enabled: true
-        service:
-          type: ClusterIP
-        rollout:
-          enabled: true
-        analysis:
-          enabled: true
+      # Chart defaults (values.yaml) + the staging overlay, both read at the
+      # pinned targetRevision.
+      valueFiles:
+        - env/staging.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: vllm-pipeline

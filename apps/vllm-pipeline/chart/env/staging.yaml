@@ -1,0 +1,27 @@
+# STAGING values (cluster-A, GPU) — the canary side of the Kargo pipeline.
+#
+# This file is the PROMOTABLE unit: the Kargo Warehouse watches
+# apps/vllm-pipeline/, so editing this (e.g. a new model) cuts a new Freight
+# commit that flows staging -> prod. The staging Argo CD app loads it via
+# helm.valueFiles at whatever commit Kargo has pinned its targetRevision to.
+#
+# VRAM math (16 GB, time-sliced/shared): the Helmfile vLLM (3B @ 0.55 ~ 8.8 GB)
+# + embeddings (0.20 ~ 3.2 GB) leave ~4 GB free. A canary briefly runs TWO pods,
+# so staging must be tiny: Qwen2.5-0.5B @ 0.15 util (~2.4 GB/pod) keeps both
+# stable+canary inside the free VRAM. A 1.5B model does NOT fit here.
+namespace: vllm-pipeline
+image:
+  repository: vllm/vllm-openai
+  tag: "v0.11.0"
+model:
+  name: "Qwen/Qwen2.5-0.5B-Instruct"
+  maxModelLen: 2048
+  gpuMemoryUtilization: "0.15"
+gpu:
+  enabled: true
+service:
+  type: ClusterIP
+rollout:
+  enabled: true
+analysis:
+  enabled: true
