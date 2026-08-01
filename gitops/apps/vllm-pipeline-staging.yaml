@@ -1,7 +1,11 @@
 # vLLM STAGING (cluster-A, GPU) — the canary side of the Kargo pipeline.
-# Renders an Argo Rollouts Rollout with a Prometheus-gated canary. Uses the
-# small Qwen2.5-1.5B model at low VRAM so stable+canary fit on the time-sliced
-# GPU alongside the existing Helmfile vLLM (~0.55) + embeddings (~0.20).
+# Renders an Argo Rollouts Rollout with a Prometheus-gated canary.
+#
+# VRAM math (16 GB, time-sliced/shared): the existing Helmfile vLLM (3B @ 0.55 ≈
+# 8.8 GB) + embeddings (0.20 ≈ 3.2 GB) leave only ~4 GB free. A canary briefly
+# runs TWO pods, so staging must be tiny: Qwen2.5-0.5B at 0.15 util (~2.4 GB/pod)
+# keeps both stable+canary inside the free VRAM. A 1.5B model does NOT fit here
+# (weights alone exceed the budget -> "No available memory for the cache blocks").
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -24,9 +28,9 @@ spec:
           repository: vllm/vllm-openai
           tag: "v0.11.0"
         model:
-          name: "Qwen/Qwen2.5-1.5B-Instruct"
-          maxModelLen: 8192
-          gpuMemoryUtilization: "0.20"
+          name: "Qwen/Qwen2.5-0.5B-Instruct"
+          maxModelLen: 2048
+          gpuMemoryUtilization: "0.15"
         gpu:
           enabled: true
         service:

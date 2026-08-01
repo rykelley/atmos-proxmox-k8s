@@ -51,6 +51,10 @@ modelCache:
 shmSize: 4Gi
 hfTokenSecret: ""
 
+# Extra environment variables for the vLLM container (list of {name,value}).
+# Used e.g. by the CPU prod path to cap the CPU KV-cache (VLLM_CPU_KVCACHE_SPACE).
+extraEnv: []
+
 service:
   port: 8000
   type: ClusterIP

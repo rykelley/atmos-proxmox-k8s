@@ -32,13 +32,9 @@ spec:
         {{- if .Values.gpu.enabled }}
         - "--gpu-memory-utilization"
         - {{ .Values.model.gpuMemoryUtilization | quote }}
-        {{- else }}
-        # CPU path (prod stand-in). NOTE: requires a CPU-capable vLLM image;
-        # the stock vllm/vllm-openai image is CUDA-only. Override image.* with a
-        # CPU build if the default image fails to start on the CPU-only cluster.
-        - "--device"
-        - "cpu"
         {{- end }}
+        {{- /* CPU path uses the dedicated vllm/vllm-openai-cpu image, which
+               auto-detects the CPU platform - no --device flag needed. */}}
         {{- with .Values.model.extraArgs }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -51,6 +47,9 @@ spec:
             secretKeyRef:
               name: {{ . }}
               key: HF_TOKEN
+        {{- end }}
+        {{- with .Values.extraEnv }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
       ports:
         - name: http

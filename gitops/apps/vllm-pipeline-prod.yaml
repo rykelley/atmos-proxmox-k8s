@@ -2,8 +2,9 @@
 # A plain Deployment serving a tiny CPU model, exposed on the LAN at 10.10.1.246.
 # Kargo promotes by bumping image.tag / model here once the staging canary passes.
 #
-# NOTE: the stock vllm/vllm-openai image is CUDA-only. If it fails to start on
-# the CPU-only cluster, override image.* with a CPU-capable vLLM build.
+# Uses the official CPU image (vllm/vllm-openai-cpu), which auto-detects the CPU
+# platform. Sized for cluster-B's 8 GiB nodes: modest requests + a capped CPU
+# KV cache (VLLM_CPU_KVCACHE_SPACE) so weights + cache fit in RAM.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -23,21 +24,29 @@ spec:
       values: |
         namespace: vllm-pipeline
         image:
-          repository: vllm/vllm-openai
-          tag: "v0.11.0"
+          # Official CPU build (auto-detects CPU platform). Kargo bumps this tag.
+          repository: vllm/vllm-openai-cpu
+          tag: "v0.26.0-x86_64"
         model:
           name: "Qwen/Qwen2.5-0.5B-Instruct"
-          maxModelLen: 4096
+          maxModelLen: 2048
         gpu:
           enabled: false
         replicas: 1
+        # Fits cluster-B's 2-core / 8 GiB nodes with headroom for kube-system.
         resources:
           requests:
+            cpu: "1"
+            memory: 3Gi
+          limits:
             cpu: "2"
             memory: 6Gi
-          limits:
-            cpu: "6"
-            memory: 12Gi
+        # tmpfs /dev/shm counts against pod memory; keep it small on CPU.
+        shmSize: 1Gi
+        # Cap the CPU KV cache (GiB) so weights + cache stay within the limit.
+        extraEnv:
+          - name: VLLM_CPU_KVCACHE_SPACE
+            value: "2"
         service:
           type: LoadBalancer
         loadBalancer:

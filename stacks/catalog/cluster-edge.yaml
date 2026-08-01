@@ -52,7 +52,10 @@ components:
         vm_defaults:
           cores: 2
           sockets: 1
-          memory: 4096
+          # 8 GiB (up from 4): cluster-A mirrors at 4 GiB, but cluster-B runs the
+          # promoted model on CPU (no GPU offload), so it needs real host RAM for
+          # model weights + the CPU KV cache. 4 GiB could not even schedule vLLM.
+          memory: 8192
           disk_size: 40
           cpu_type: "host"
           os_type: "l26"
