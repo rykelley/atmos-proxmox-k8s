@@ -1,0 +1,32 @@
+{{- if .Values.loadBalancer.enabled }}
+# Dedicated Cilium LoadBalancer IPAM + L2 announcement for the promoted vLLM
+# Service (used on the prod cluster to expose the model on the LAN). The
+# serviceSelector is scoped by app label so this pool stays independent.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: {{ .Values.loadBalancer.poolName }}
+  labels:
+    {{- include "vllm-pipeline.labels" . | nindent 4 }}
+spec:
+  blocks:
+    - start: {{ .Values.loadBalancer.ip | quote }}
+      stop: {{ .Values.loadBalancer.ip | quote }}
+  serviceSelector:
+    matchLabels:
+      {{- include "vllm-pipeline.selectorLabels" . | nindent 6 }}
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: {{ .Values.loadBalancer.poolName }}
+  labels:
+    {{- include "vllm-pipeline.labels" . | nindent 4 }}
+spec:
+  serviceSelector:
+    matchLabels:
+      {{- include "vllm-pipeline.selectorLabels" . | nindent 6 }}
+  interfaces:
+    - {{ printf "^%s$" .Values.loadBalancer.interface | quote }}
+  loadBalancerIPs: true
+{{- end }}

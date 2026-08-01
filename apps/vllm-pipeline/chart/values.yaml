@@ -1,0 +1,88 @@
+# Distinct app name so cluster-scoped resources (Cilium LB pool) and label
+# selectors NEVER collide with the Helmfile-managed vLLM (app name "vllm") that
+# already runs on cluster-A.
+appName: vllm-pipeline
+namespace: vllm-pipeline
+
+image:
+  repository: vllm/vllm-openai
+  # Kargo promotes by bumping THIS tag (staging -> prod). See gitops/apps/*.
+  tag: "v0.11.0"
+  pullPolicy: IfNotPresent
+
+replicas: 1
+
+model:
+  # Overridden per environment: staging = small GPU model, prod = tiny CPU model.
+  name: "Qwen/Qwen2.5-1.5B-Instruct"
+  maxModelLen: 8192
+  # VRAM fraction for the GPU path. IMPORTANT: the GPU is time-sliced and SHARES
+  # VRAM. cluster-A already runs the Helmfile vLLM (~0.55) + embeddings (~0.20),
+  # leaving little headroom. A canary briefly runs stable+canary, so keep this
+  # low. Lower the Helmfile vLLM's utilization if you hit GPU OOM.
+  gpuMemoryUtilization: "0.20"
+  extraArgs: []
+
+# GPU path (staging) vs CPU path (prod stand-in).
+gpu:
+  enabled: true
+  count: 1
+  runtimeClassName: nvidia
+  nodeSelector:
+    nvidia.com/gpu.present: "true"
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+resources:
+  requests:
+    cpu: "2"
+    memory: 6Gi
+  limits:
+    cpu: "6"
+    memory: 16Gi
+
+# emptyDir by default (ephemeral pipeline pods). Set a size for a PVC-backed cache.
+modelCache:
+  size: "0"
+  storageClassName: ""
+
+shmSize: 4Gi
+hfTokenSecret: ""
+
+service:
+  port: 8000
+  type: ClusterIP
+
+# Optional Cilium L2 LoadBalancer (used by the prod app to expose the promoted
+# model on the LAN). Leave disabled for the staging pipeline.
+loadBalancer:
+  enabled: false
+  poolName: vllm-pipeline-lb-pool
+  ip: ""
+  interface: "eth0"
+
+# Argo Rollouts canary (staging only). When false the chart renders a plain
+# Deployment (the prod CPU stand-in), so it needs no Rollouts controller.
+rollout:
+  enabled: false
+  canary:
+    steps:
+      - setWeight: 25
+      - pause: { duration: 60 }
+      - setWeight: 50
+      - pause: { duration: 60 }
+      - setWeight: 100
+
+# Prometheus-backed AnalysisTemplate that gates canary promotion.
+analysis:
+  enabled: false
+  prometheusAddress: "http://prometheus-operated.monitoring.svc.cluster.local:9090"
+  # Gate: the canary's scrape targets must be up for `count` consecutive checks.
+  # Robust with or without live traffic. A richer success-rate/latency query is
+  # provided (commented) in templates/analysistemplate.yaml for when you add a
+  # load generator.
+  interval: "30s"
+  count: 3
+  failureLimit: 1

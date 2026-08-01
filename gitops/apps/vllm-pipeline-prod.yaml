@@ -1,0 +1,60 @@
+# vLLM PROD (cluster-B, CPU) — the promotion TARGET of the Kargo pipeline.
+# A plain Deployment serving a tiny CPU model, exposed on the LAN at 10.10.1.246.
+# Kargo promotes by bumping image.tag / model here once the staging canary passes.
+#
+# NOTE: the stock vllm/vllm-openai image is CUDA-only. If it fails to start on
+# the CPU-only cluster, override image.* with a CPU-capable vLLM build.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vllm-pipeline-prod
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/rykelley/atmos-proxmox-k8s.git
+    targetRevision: main
+    path: apps/vllm-pipeline/chart
+    helm:
+      values: |
+        namespace: vllm-pipeline
+        image:
+          repository: vllm/vllm-openai
+          tag: "v0.11.0"
+        model:
+          name: "Qwen/Qwen2.5-0.5B-Instruct"
+          maxModelLen: 4096
+        gpu:
+          enabled: false
+        replicas: 1
+        resources:
+          requests:
+            cpu: "2"
+            memory: 6Gi
+          limits:
+            cpu: "6"
+            memory: 12Gi
+        service:
+          type: LoadBalancer
+        loadBalancer:
+          enabled: true
+          ip: "10.10.1.246"
+          interface: "eth0"
+        rollout:
+          enabled: false
+        analysis:
+          enabled: false
+  destination:
+    # Registered by scripts/register-cluster-b-argocd.sh (Phase 2).
+    name: cluster-b
+    namespace: vllm-pipeline
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

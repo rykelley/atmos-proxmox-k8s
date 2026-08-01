@@ -1,0 +1,40 @@
+{{- if and .Values.rollout.enabled .Values.analysis.enabled }}
+# Prometheus AnalysisTemplate that gates canary promotion. Argo Rollouts (and,
+# later, Kargo's verification step) reference this by name.
+#
+# Default gate: the canary's scrape targets in this namespace must be `up` for
+# `count` consecutive checks. This is robust with or without live traffic. Once
+# you add a load generator, swap the query for the richer success-rate one below.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ .Values.appName }}-canary
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "vllm-pipeline.labels" . | nindent 4 }}
+spec:
+  metrics:
+    - name: canary-up
+      interval: {{ .Values.analysis.interval | quote }}
+      count: {{ .Values.analysis.count }}
+      failureLimit: {{ .Values.analysis.failureLimit }}
+      successCondition: "result[0] >= 1"
+      provider:
+        prometheus:
+          address: {{ .Values.analysis.prometheusAddress | quote }}
+          query: |
+            avg(up{namespace="{{ .Values.namespace }}"})
+    # --- Richer gate for when a load generator drives the canary (optional) ---
+    # - name: request-success-rate
+    #   interval: {{ .Values.analysis.interval | quote }}
+    #   count: {{ .Values.analysis.count }}
+    #   failureLimit: {{ .Values.analysis.failureLimit }}
+    #   successCondition: "result[0] >= 0.95"
+    #   provider:
+    #     prometheus:
+    #       address: {{ .Values.analysis.prometheusAddress | quote }}
+    #       query: |
+    #         sum(rate(vllm:request_success_total{namespace="{{ .Values.namespace }}"}[2m]))
+    #         /
+    #         clamp_min(sum(rate(vllm:request_success_total{namespace="{{ .Values.namespace }}"}[2m])), 1)
+{{- end }}

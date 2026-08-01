@@ -1,0 +1,70 @@
+# Argo Rollouts controller — the progressive-delivery engine that runs the vLLM
+# canary + AnalysisRuns. Installed on BOTH clusters from the hub's Argo CD:
+#   - cluster-A (in-cluster): drives the GPU staging canary.
+#   - cluster-B (name: cluster-b): present for parity / future prod canaries.
+#
+# sync-wave 0 so the controller + CRDs land before the vllm-pipeline apps
+# (wave 5) that create Rollout/AnalysisTemplate CRs. ServerSideApply because the
+# Rollout CRD exceeds the client-side apply annotation size limit.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-rollouts
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://argoproj.github.io/argo-helm
+    chart: argo-rollouts
+    targetRevision: 2.41.1
+    helm:
+      values: |
+        controller:
+          metrics:
+            enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argo-rollouts
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-rollouts-cluster-b
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://argoproj.github.io/argo-helm
+    chart: argo-rollouts
+    targetRevision: 2.41.1
+    helm:
+      values: |
+        controller:
+          metrics:
+            enabled: true
+  destination:
+    # Registered by scripts/register-cluster-b-argocd.sh (Phase 2).
+    name: cluster-b
+    namespace: argo-rollouts
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

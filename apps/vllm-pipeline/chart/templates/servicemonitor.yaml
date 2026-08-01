@@ -1,0 +1,23 @@
+{{- if .Values.rollout.enabled }}
+# Only the staging (GPU) side scrapes metrics for canary analysis. Prometheus
+# (kube-prometheus-stack) watches ServiceMonitors in every namespace, so no
+# extra wiring is needed. The prod stand-in cluster has no Prometheus.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.appName }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "vllm-pipeline.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "vllm-pipeline.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+{{- end }}

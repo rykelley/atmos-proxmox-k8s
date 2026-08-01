@@ -1,0 +1,10 @@
+apiVersion: v2
+name: vllm-pipeline
+description: >-
+  vLLM for the Kargo canary-promotion pipeline. Renders an Argo Rollouts Rollout
+  (canary + Prometheus AnalysisTemplate) on the GPU staging cluster, or a plain
+  CPU Deployment on the prod stand-in cluster. Deliberately distinct from the
+  Helmfile-managed `vllm` chart so the two never collide.
+type: application
+version: 0.1.0
+appVersion: "0.11.0"

@@ -1,0 +1,39 @@
+{{- if not .Values.rollout.enabled }}
+# Plain Deployment path (the prod CPU stand-in on cluster-B). No Argo Rollouts
+# controller required here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.appName }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "vllm-pipeline.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "vllm-pipeline.selectorLabels" . | nindent 6 }}
+  template:
+    {{- include "vllm-pipeline.podTemplate" . | nindent 4 }}
+{{- if eq (include "vllm-pipeline.persistModelCache" .) "true" }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.appName }}-model-cache
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "vllm-pipeline.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.modelCache.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.modelCache.size | quote }}
+{{- end }}
+{{- end }}

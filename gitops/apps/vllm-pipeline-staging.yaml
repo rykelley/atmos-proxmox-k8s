@@ -1,0 +1,46 @@
+# vLLM STAGING (cluster-A, GPU) — the canary side of the Kargo pipeline.
+# Renders an Argo Rollouts Rollout with a Prometheus-gated canary. Uses the
+# small Qwen2.5-1.5B model at low VRAM so stable+canary fit on the time-sliced
+# GPU alongside the existing Helmfile vLLM (~0.55) + embeddings (~0.20).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vllm-pipeline-staging
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/rykelley/atmos-proxmox-k8s.git
+    targetRevision: main
+    path: apps/vllm-pipeline/chart
+    helm:
+      values: |
+        namespace: vllm-pipeline
+        image:
+          repository: vllm/vllm-openai
+          tag: "v0.11.0"
+        model:
+          name: "Qwen/Qwen2.5-1.5B-Instruct"
+          maxModelLen: 8192
+          gpuMemoryUtilization: "0.20"
+        gpu:
+          enabled: true
+        service:
+          type: ClusterIP
+        rollout:
+          enabled: true
+        analysis:
+          enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: vllm-pipeline
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
