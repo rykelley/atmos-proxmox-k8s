@@ -1,0 +1,125 @@
+# yaml-language-server: $schema=https://atmos.tools/schemas/atmos/atmos-manifest/1.0/atmos-manifest.json
+#
+# Single source of truth for cluster-B ("edge") — the second, CPU-only k3s
+# cluster that serves as the PROD promotion target in the Kargo pipeline.
+# Imported by stacks/deploy/edge/cluster.yaml (addressed as `-s edge`).
+#
+# Cluster-B lives on a STANDALONE Proxmox host (pve2, API at 10.10.1.82) with its
+# own endpoint/token, and shares NOTHING with the prod cluster except the flat
+# 10.10.1.0/24 LAN. Its VIP (.50) and node IPs (.51-.53) are deliberately clear
+# of cluster-A's VIP (.30), nodes (.31-.37), and LB IPs (.240-.245).
+#
+# Only the components needed to stand up a reconcile target live here:
+# proxmox-vms (VMs), k3s (HA control plane), and cilium (CNI + L2 LoadBalancer).
+# Argo Rollouts, the promoted vLLM, etc. arrive via the hub's Argo CD in later
+# phases; cluster-B does NOT run its own Argo CD.
+
+components:
+  terraform:
+    proxmox-vms:
+      metadata:
+        component: proxmox-vms
+      env:
+        # cluster-B is a STANDALONE Proxmox host with its own API endpoint/token.
+        # The bpg/proxmox provider reads these from the environment; scoping them
+        # to this component keeps `-s prod` on the ambient PROXMOX_VE_* from .env.
+        # Populate PROXMOX_VE_B_* in your .env (see .env.example).
+        PROXMOX_VE_ENDPOINT: '{{ env "PROXMOX_VE_B_ENDPOINT" | default "https://10.10.1.82:8006/" }}'
+        PROXMOX_VE_API_TOKEN: '{{ env "PROXMOX_VE_B_API_TOKEN" }}'
+        PROXMOX_VE_INSECURE: "true"
+        PROXMOX_VE_SSH_USERNAME: "root"
+      vars:
+        # --- Proxmox (standalone host pve2) ---
+        target_node: "pve2"
+        template_name: "ubuntu-2404-cloudinit"
+        template_id: 0
+        datastore_id: "local-lvm"
+        snippets_datastore_id: "local"
+        ci_user: "ubuntu"
+        ssh_public_keys:
+          - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAIvPLEv5/P7zGc833XvRZSc5C4kEIIN0sMzcumHfeR1 rykelley@Ryans-MBP.localdomain"
+
+        # --- Network (bridged on 10.10.1.0/24, same LAN as cluster-A) ---
+        bridge: "vmbr0"
+        vlan_id: 0
+        gateway: "10.10.1.1"
+        netmask: 24
+        dns_servers:
+          - "1.1.1.1"
+          - "8.8.8.8"
+        dns_domain: "lan"
+
+        vm_defaults:
+          cores: 2
+          sockets: 1
+          memory: 4096
+          disk_size: 40
+          cpu_type: "host"
+          os_type: "l26"
+          started: true
+          on_boot: true
+          agent: true
+
+        # --- Nodes: mirror cluster-A's VM topology (3 servers + 3 agents,
+        # CPU-only). VMIDs in distinct 83xx (servers) / 84xx (agents) ranges.
+        # cluster-A's 7th node is the bare-metal GPU box, which has no cluster-B
+        # equivalent (only one GPU), so cluster-B stops at these 6 VMs. ---
+        nodes:
+          edge-server-1: { role: "server", ip: "10.10.1.51", vmid: 8301 }
+          edge-server-2: { role: "server", ip: "10.10.1.52", vmid: 8302 }
+          edge-server-3: { role: "server", ip: "10.10.1.53", vmid: 8303 }
+          edge-agent-1: { role: "agent", ip: "10.10.1.54", vmid: 8401 }
+          edge-agent-2: { role: "agent", ip: "10.10.1.55", vmid: 8402 }
+          edge-agent-3: { role: "agent", ip: "10.10.1.56", vmid: 8403 }
+
+  ansible:
+    k3s:
+      metadata:
+        component: k3s
+      settings:
+        ansible:
+          playbook: site.yml
+          # cluster-B's own inventory (3 edge-server-* hosts).
+          inventory: inventory/hosts-edge.yml
+        depends_on:
+          1:
+            component: proxmox-vms
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: "false"
+        ANSIBLE_FORCE_COLOR: "true"
+      vars:
+        k3s_version: "v1.36.2+k3s1"
+        kube_vip_version: "v0.8.7"
+        kube_vip_interface: "eth0"
+        # cluster-B control-plane VIP (distinct from cluster-A's 10.10.1.30).
+        control_plane_vip: "10.10.1.50"
+        api_port: 6443
+        pod_cidr: "10.42.0.0/16"
+        service_cidr: "10.43.0.0/16"
+        cluster_dns: "10.43.0.10"
+        # Write cluster-B's kubeconfig to its OWN path so both clusters can be
+        # managed side by side (helmfile below points KUBECONFIG here too).
+        kubeconfig_local_path: '{{ env "HOME" }}/.kube/atmos-k3s-edge.yaml'
+
+  helmfile:
+    cilium:
+      metadata:
+        component: cilium
+      settings:
+        depends_on:
+          1:
+            component: k3s
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s-edge.yaml'
+      vars:
+        cilium_chart_version: "1.16.5"
+        control_plane_vip: "10.10.1.50"
+        api_port: 6443
+        pod_cidr: "10.42.0.0/16"
+        # No Gateway API on cluster-B (no north-south ingress needed), but keep
+        # L2 announcements so the promoted vLLM Service can claim an L2 LB IP.
+        enable_gateway_api: false
+        enable_l2_announcements: true
+        k8s_client_qps: 15
+        k8s_client_burst: 20
+        gateway_api_crds_url: "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/experimental-install.yaml"

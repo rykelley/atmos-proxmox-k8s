@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://atmos.tools/schemas/atmos/atmos-manifest/1.0/atmos-manifest.json
+#
+# cluster-B ("edge") stack. Imports the edge catalog and instantiates the
+# provisioning components for the second cluster. With name_pattern "{stage}"
+# this stack is addressed as `-s edge`.
+#
+# Override any edge catalog value here for host-specific tweaks.
+
+import:
+  - catalog/cluster-edge
+
+vars:
+  stage: edge

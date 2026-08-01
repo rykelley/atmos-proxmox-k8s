@@ -122,3 +122,41 @@ workflows:
     steps:
       - name: plan
         command: terraform plan proxmox-vms -s prod
+
+  deploy-cluster-b:
+    description: "Provision cluster-B (the Kargo prod target) on the standalone Proxmox host pve2 (10.10.1.82): 3-server HA k3s + kube-vip (VIP 10.10.1.50), then Cilium. CPU-only. Requires PROXMOX_VE_B_* in .env and the ubuntu-2404-cloudinit template on pve2 (see scripts/create-ubuntu-template.sh)."
+    steps:
+      - name: provision-vms
+        command: terraform apply proxmox-vms -s edge -auto-approve
+      - name: wait-for-ssh
+        type: shell
+        command: |
+          echo "Waiting 60s for cloud-init / SSH on the new cluster-B VMs..."
+          sleep 60
+      - name: install-k3s
+        command: ansible playbook k3s -s edge
+      - name: deploy-cilium
+        command: helmfile apply cilium -s edge
+
+  destroy-cluster-b:
+    description: "Tear down cluster-B (removes the pve2 VMs)."
+    steps:
+      - name: destroy-cilium
+        command: helmfile destroy cilium -s edge
+        # Best-effort: the cluster may already be gone.
+      - name: destroy-vms
+        command: terraform destroy proxmox-vms -s edge -auto-approve
+
+  plan-vms-b:
+    description: "Plan the cluster-B Proxmox VM changes only."
+    steps:
+      - name: plan
+        command: terraform plan proxmox-vms -s edge
+
+  register-cluster-b:
+    description: "Register cluster-B with the hub's Argo CD: creates an argocd-manager SA + cluster-admin binding on cluster-B and an Argo CD cluster Secret on the hub (cluster-A). Run after deploy-cluster-b, and after Argo CD is up on cluster-A (deploy-rag)."
+    steps:
+      - name: register
+        type: shell
+        command: |
+          bash scripts/register-cluster-b-argocd.sh

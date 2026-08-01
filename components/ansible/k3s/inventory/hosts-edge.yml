@@ -1,0 +1,40 @@
+# Static inventory for cluster-B (the "edge" stage) — the Kargo promotion target.
+#
+# Mirrors inventory/hosts.yml but for the STANDALONE Proxmox host pve2 (API at
+# 10.10.1.82). Mimics cluster-A's VM topology: 3-server HA control plane + 3
+# agents, CPU-only (no GPU node — only one GPU exists, and it's in cluster-A).
+#
+# IPs here must match the `edge` overrides in stacks/catalog/cluster-edge.yaml
+# (VIP 10.10.1.50, servers .51/.52/.53, agents .54/.55/.56). site.yml drives
+# play targeting off these groups.
+all:
+  vars:
+    ansible_user: ubuntu
+    ansible_python_interpreter: /usr/bin/python3
+  children:
+    k3s_cluster:
+      children:
+        k3s_servers:
+          hosts:
+            edge-server-1:
+              ansible_host: 10.10.1.51
+              k3s_node_ip: 10.10.1.51
+            edge-server-2:
+              ansible_host: 10.10.1.52
+              k3s_node_ip: 10.10.1.52
+            edge-server-3:
+              ansible_host: 10.10.1.53
+              k3s_node_ip: 10.10.1.53
+        # 3 agents (mirrors cluster-A). No GPU node on cluster-B, so the k3s_gpu
+        # play in site.yml matches no hosts here and is skipped.
+        k3s_agents:
+          hosts:
+            edge-agent-1:
+              ansible_host: 10.10.1.54
+              k3s_node_ip: 10.10.1.54
+            edge-agent-2:
+              ansible_host: 10.10.1.55
+              k3s_node_ip: 10.10.1.55
+            edge-agent-3:
+              ansible_host: 10.10.1.56
+              k3s_node_ip: 10.10.1.56

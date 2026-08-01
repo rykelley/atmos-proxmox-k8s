@@ -27,3 +27,8 @@ k3s_server_disable:
 # Where the fetched kubeconfig is written on the control node (relative to the
 # component dir). Set by site.yml.
 kubeconfig_fetch_dir: "fetched"
+
+# Stable local path the fetched kubeconfig is written to (what Helmfile/kubectl
+# use via KUBECONFIG). Overridden per-cluster in the stack so cluster-A and
+# cluster-B don't clobber each other (edge uses ~/.kube/atmos-k3s-edge.yaml).
+kubeconfig_local_path: "{{ lookup('env', 'HOME') }}/.kube/atmos-k3s.yaml"

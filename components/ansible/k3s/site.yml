@@ -82,7 +82,7 @@
         state: directory
         mode: "0700"
       loop:
-        - "{{ lookup('env', 'HOME') }}/.kube"
+        - "{{ kubeconfig_local_path | dirname }}"
         - "{{ playbook_dir }}/{{ kubeconfig_fetch_dir }}"
 
     - name: Write kubeconfig to the stable path used by Helmfile and a local copy
@@ -93,11 +93,11 @@
         mode: "0600"
         content: "{{ _kubeconfig_content }}"
       loop:
-        - "{{ lookup('env', 'HOME') }}/.kube/atmos-k3s.yaml"
+        - "{{ kubeconfig_local_path }}"
         - "{{ playbook_dir }}/{{ kubeconfig_fetch_dir }}/kubeconfig"
 
     - name: Report kubeconfig location
       delegate_to: localhost
       become: false
       ansible.builtin.debug:
-        msg: "Kubeconfig written to ~/.kube/atmos-k3s.yaml (server https://{{ control_plane_vip }}:{{ api_port }})"
+        msg: "Kubeconfig written to {{ kubeconfig_local_path }} (server https://{{ control_plane_vip }}:{{ api_port }})"
