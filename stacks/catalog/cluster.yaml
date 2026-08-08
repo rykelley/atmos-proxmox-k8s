@@ -97,6 +97,11 @@ components:
         pod_cidr: "10.42.0.0/16"
         # North-south ingress + bare-metal LoadBalancer for the filament app.
         enable_gateway_api: true
+        # Also serve classic k8s Ingress via Cilium's Envoy (shared entrypoint on
+        # 10.10.1.248). The cluster's UIs use Gateway API; this is for future
+        # Ingress-based apps. Pool + L2 policy live in gitops/networking.
+        enable_ingress_controller: true
+        ingress_lb_ip: "10.10.1.248"
         enable_l2_announcements: true
         k8s_client_qps: 15
         k8s_client_burst: 20

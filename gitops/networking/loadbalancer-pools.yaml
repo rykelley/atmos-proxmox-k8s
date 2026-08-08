@@ -4,9 +4,10 @@
 # each own their own pool elsewhere).
 #
 # IP map on 10.10.1.0/24: .240 filament, .241 hubble, .242 vLLM, .243 open-webui,
-# .244 argocd, .245 grafana, .246 vllm-pipeline-prod (cluster-B), .247 kargo
+# .244 argocd, .245 grafana, .246 vllm-pipeline-prod (cluster-B), .247 kargo,
+# .248 cilium-ingress (shared classic-Ingress entrypoint).
 # (.246/.247 are defined outside this file: the vllm-pipeline chart and
-# kargo/kargo-gateway.yaml respectively).
+# kargo/kargo-gateway.yaml respectively.)
 ---
 apiVersion: cilium.io/v2alpha1
 kind: CiliumLoadBalancerIPPool
@@ -55,6 +56,34 @@ spec:
   serviceSelector:
     matchLabels:
       app.kubernetes.io/name: grafana
+  interfaces:
+    # See open-webui above: match eth0 (VMs) or eno1 (bare-metal GPU node).
+    - "^(eth0|eno1)$"
+  loadBalancerIPs: true
+---
+# Shared Cilium Ingress controller entrypoint (kube-system/cilium-ingress). Cilium
+# creates this LoadBalancer Service when ingressController.enabled=true and labels
+# it cilium.io/ingress=true; every classic Ingress routes through it via Envoy.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: cilium-ingress-lb-pool
+spec:
+  blocks:
+    - start: "10.10.1.248"
+      stop: "10.10.1.248"
+  serviceSelector:
+    matchLabels:
+      cilium.io/ingress: "true"
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: cilium-ingress-lb-pool
+spec:
+  serviceSelector:
+    matchLabels:
+      cilium.io/ingress: "true"
   interfaces:
     # See open-webui above: match eth0 (VMs) or eno1 (bare-metal GPU node).
     - "^(eth0|eno1)$"

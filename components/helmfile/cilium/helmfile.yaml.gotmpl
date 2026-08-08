@@ -71,6 +71,25 @@ releases:
         gatewayAPI:
           enabled: {{ .Values.enable_gateway_api | default true }}
 
+        # --- Ingress controller (standard networking.k8s.io/v1 Ingress) ---
+        # Cilium can serve BOTH Gateway API (above) and classic Ingress via the
+        # same Envoy L7 proxy. The cluster's UIs use Gateway API; this makes plain
+        # Ingress available too. `shared` mode routes every Ingress through one
+        # `cilium-ingress` LoadBalancer Service (kube-system) pinned to a reserved
+        # LAN IP, so future apps just add an Ingress (host/path) with no new IP.
+        ingressController:
+          enabled: {{ .Values.enable_ingress_controller | default false }}
+          # Handle Ingress resources that don't set an ingressClassName.
+          default: true
+          loadbalancerMode: shared
+          # Plain HTTP on the trusted LAN; don't 308-redirect to HTTPS.
+          enforceHttps: false
+          service:
+            # Cilium LB-IPAM assigns this specific address to the shared
+            # cilium-ingress Service (pool/L2 policy in gitops/networking).
+            annotations:
+              io.cilium/lb-ipam-ips: {{ .Values.ingress_lb_ip | default "10.10.1.248" | quote }}
+
         # --- L2 LoadBalancer for bare-metal (no servicelb) ---
         # LB IPs are allocated by CiliumLoadBalancerIPPool and advertised via
         # CiliumL2AnnouncementPolicy (both shipped with the filament-app chart).
