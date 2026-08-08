@@ -21,8 +21,17 @@ spec:
             type: LoadBalancer
             annotations:
               io.cilium/lb-ipam-ips: "10.10.1.245"
+          # Stable admin creds from an OUT-OF-BAND secret (not in Git), so the
+          # password survives pod recreation (Grafana has no PV here). Create it
+          # once:  kubectl -n monitoring create secret generic grafana-admin \
+          #          --from-literal=admin-user=admin \
+          #          --from-literal=admin-password='<your-password>'
+          admin:
+            existingSecret: grafana-admin
+            userKey: admin-user
+            passwordKey: admin-password
           # Anonymous view access keeps LAN browsing simple; admin login still
-          # works (password in the grafana secret).
+          # works (credentials in the grafana-admin secret above).
           grafana.ini:
             auth.anonymous:
               enabled: true
