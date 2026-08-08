@@ -34,8 +34,9 @@ releases:
             # environment so no secret material lands in Git.
             passwordHash: {{ requiredEnv "KARGO_ADMIN_PASSWORD_HASH" | quote }}
             tokenSigningKey: {{ requiredEnv "KARGO_ADMIN_TOKEN_SIGNING_KEY" | quote }}
-          # Plain HTTP on the trusted LAN (mirrors Argo CD's insecure mode); the
-          # UI is reached via `kubectl -n kargo port-forward svc/kargo-api 8080:80`.
+          # Plain HTTP on the trusted LAN (mirrors Argo CD's insecure mode). The
+          # UI is exposed on the LAN at 10.10.1.247 via Cilium Gateway API (see
+          # kargo/kargo-gateway.yaml, applied by the deploy-kargo workflow).
           tls:
             enabled: false
           service:

@@ -45,8 +45,8 @@ cat <<'EOF'
 
 ==> Done. The Kargo pipeline is live.
 
-Open the UI:   kubectl -n kargo port-forward svc/kargo-api 8080:80
-               then browse http://localhost:8080 (user: admin)
+Open the UI:   http://10.10.1.247  (user: admin)
+               fallback: kubectl -n kargo port-forward svc/kargo-api 8080:80
 
 Promote (UI):  select project vllm-promo, drag Freight onto `staging`, wait for
                the canary + verification to pass, then promote it to `prod`.

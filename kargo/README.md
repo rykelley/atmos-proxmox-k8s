@@ -53,10 +53,12 @@ This installs cert-manager, installs Kargo, and bootstraps the pipeline.
 
 ## Promote
 
-Open the UI (or use the CLI):
+Open the UI at **http://10.10.1.247** (Cilium Gateway API "ingress", user: `admin`).
+`deploy-kargo` applies `kargo/kargo-gateway.yaml` to expose it. Port-forward still
+works as a fallback:
 
 ```bash
-kubectl -n kargo port-forward svc/kargo-api 8080:80   # http://localhost:8080, user: admin
+kubectl -n kargo port-forward svc/kargo-api 8080:80   # http://localhost:8080
 ```
 
 1. Make a "release": edit `chart/env/staging.yaml` (and `chart/env/prod.yaml`),

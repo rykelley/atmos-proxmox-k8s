@@ -4,7 +4,9 @@
 # each own their own pool elsewhere).
 #
 # IP map on 10.10.1.0/24: .240 filament, .241 hubble, .242 vLLM, .243 open-webui,
-# .244 argocd, .245 grafana.
+# .244 argocd, .245 grafana, .246 vllm-pipeline-prod (cluster-B), .247 kargo
+# (.246/.247 are defined outside this file: the vllm-pipeline chart and
+# kargo/kargo-gateway.yaml respectively).
 ---
 apiVersion: cilium.io/v2alpha1
 kind: CiliumLoadBalancerIPPool

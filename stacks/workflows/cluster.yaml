@@ -169,6 +169,11 @@ workflows:
       - name: install-kargo
         # --skip-diff-on-install: Kargo installs its own CRDs in the same apply.
         command: helmfile apply kargo -s prod -- --skip-diff-on-install
+      - name: expose-kargo-ui
+        # Cilium Gateway API "ingress" for the Kargo UI on 10.10.1.247.
+        type: shell
+        command: |
+          KUBECONFIG="${HOME}/.kube/atmos-k3s.yaml" kubectl apply -f kargo/kargo-gateway.yaml
       - name: setup-project
         type: shell
         command: |
@@ -180,6 +185,7 @@ workflows:
       - name: delete-pipeline
         type: shell
         command: |
+          KUBECONFIG="${HOME}/.kube/atmos-k3s.yaml" kubectl delete -f kargo/kargo-gateway.yaml --ignore-not-found || true
           KUBECONFIG="${HOME}/.kube/atmos-k3s.yaml" kubectl delete -f kargo/pipeline.yaml --ignore-not-found || true
           KUBECONFIG="${HOME}/.kube/atmos-k3s.yaml" kubectl delete -f kargo/project.yaml --ignore-not-found || true
       - name: destroy-kargo
