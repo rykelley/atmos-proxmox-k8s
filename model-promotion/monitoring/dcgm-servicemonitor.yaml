@@ -1,0 +1,37 @@
+# Standalone DCGM ServiceMonitor — fallback / documentation copy.
+#
+# Prefer the Helm `additionalServiceMonitors` entries in
+# kube-prometheus-stack/{staging,prod}-values.yaml (already applied on
+# staging via the monitoring Argo app). Use this manifest only if you need to
+# install the scrape config WITHOUT the Helm chart values path (e.g. emergency
+# kubectl apply while debugging).
+#
+# Apply (after confirming context):
+#   kubectl --context <homelab-1|homelab-2> -n monitoring apply -f \
+#     model-promotion/monitoring/dcgm-servicemonitor.yaml
+#
+# Expected metrics (verify names against the running exporter):
+#   DCGM_FI_DEV_GPU_UTIL
+#   DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_FREE
+#   DCGM_FI_DEV_GPU_TEMP
+#   DCGM_FI_DEV_POWER_USAGE
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dcgm-exporter
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: model-promotion
+    app.kubernetes.io/component: dcgm
+spec:
+  namespaceSelector:
+    matchNames:
+      - gpu-operator
+  selector:
+    matchLabels:
+      app: nvidia-dcgm-exporter
+  endpoints:
+    - port: gpu-metrics
+      interval: 15s
+      path: /metrics
