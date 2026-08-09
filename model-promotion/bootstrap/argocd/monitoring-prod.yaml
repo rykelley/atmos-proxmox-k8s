@@ -1,0 +1,51 @@
+# kube-prometheus-stack on prod (homelab-2).
+#
+# SAFETY RAILS — Phase 1 prepared this Application but it must NOT sync yet:
+#   1. Argo CD on staging must have the prod remote cluster registered
+#      (scripts/register-cluster-b-argocd.sh → Secret name usually "cluster-b").
+#   2. Confirm destination.name matches the registered cluster secret name.
+#   3. Explicit human confirmation before enabling automated sync or clicking Sync.
+#   4. Prefer Phase 4 (multi-cluster) go-ahead before treating this as live.
+#
+# Until then: leave this file in Git with automated sync OFF. Root app-of-apps
+# will create the Application object; syncPolicy below does not auto-sync.
+#
+# Values: model-promotion/monitoring/kube-prometheus-stack/prod-values.yaml
+# Chart pin: 87.17.0 (same as staging).
+#
+# Install path (Phase 4+): copy or symlink into gitops/apps/ AFTER cluster-b is
+# registered, then Sync manually. Do not place this under gitops/apps/ early —
+# root app-of-apps would create the Application immediately.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring-prod
+  namespace: argocd
+  annotations:
+    # Human gate reminder in the Argo UI.
+    model-promotion.rykelley.com/apply-gate: "requires-explicit-confirmation"
+    model-promotion.rykelley.com/phase: "1-prepared-for-phase-4"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: 87.17.0
+      helm:
+        releaseName: monitoring
+        valueFiles:
+          - $values/model-promotion/monitoring/kube-prometheus-stack/prod-values.yaml
+    - repoURL: https://github.com/rykelley/atmos-proxmox-k8s.git
+      targetRevision: main
+      ref: values
+  destination:
+    # Must match the Argo CD cluster Secret name from register-cluster-b-argocd.sh.
+    name: cluster-b
+    namespace: monitoring
+  # NO automated sync — manual Sync only after confirmation.
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

@@ -1,0 +1,68 @@
+# Prometheus Ingress resources (explicit copies for readability / kubectl apply).
+#
+# The kube-prometheus-stack values also enable chart-managed Ingress objects with
+# the same hosts. These YAML copies are the reviewable source of truth for DNS
+# and Cilium Ingress wiring; prefer letting Helm own the live objects once the
+# chart syncs.
+#
+# DNS (LAN):
+#   prometheus-staging.rykelley.com  ->  10.10.1.248  (homelab-1 cilium-ingress)
+#   prometheus-prod.rykelley.com     ->  <prod cilium-ingress VIP — TBD>
+#
+# Prerequisite: Cilium ingressController.enabled=true on the target cluster.
+# homelab-1 catalogs this as enabled, but verify `kubectl -n kube-system get svc cilium-ingress`.
+# homelab-2 (edge catalog) currently leaves Ingress off — enable before relying
+# on prometheus-prod.rykelley.com.
+#
+# DO NOT apply to prod without an explicit confirmation gate.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prometheus-staging
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: model-promotion
+    app.kubernetes.io/component: prometheus
+  annotations:
+    model-promotion.rykelley.com/cluster: staging
+spec:
+  ingressClassName: cilium
+  rules:
+    - host: prometheus-staging.rykelley.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                # Default Service name from kube-prometheus-stack release "monitoring".
+                name: monitoring-kube-prometheus-prometheus
+                port:
+                  number: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prometheus-prod
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: model-promotion
+    app.kubernetes.io/component: prometheus
+  annotations:
+    model-promotion.rykelley.com/cluster: prod
+    # SAFETY: apply only on homelab-2 after confirmation.
+    model-promotion.rykelley.com/apply-gate: "requires-explicit-confirmation"
+spec:
+  ingressClassName: cilium
+  rules:
+    - host: prometheus-prod.rykelley.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: monitoring-kube-prometheus-prometheus
+                port:
+                  number: 9090

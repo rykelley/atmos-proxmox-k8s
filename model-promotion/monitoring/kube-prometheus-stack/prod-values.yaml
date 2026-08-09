@@ -1,0 +1,58 @@
+# Prod (homelab-2) — kube-prometheus-stack values.
+# Chart: prometheus-community/kube-prometheus-stack 87.17.0 (same pin as staging).
+#
+# Grafana is intentionally DISABLED here. Phase 3 adds prod Prometheus as a
+# second datasource on the staging Grafana (prometheus-prod.rykelley.com).
+#
+# Consumed by gitops/apps/monitoring-prod.yaml (prepared; do NOT sync until
+# Argo CD has the prod remote cluster registered — Phase 4 — and you approve).
+
+# Disable Grafana on prod — unified UI lives on staging.
+grafana:
+  enabled: false
+
+alertmanager:
+  enabled: true
+
+prometheus:
+  ingress:
+    enabled: true
+    ingressClassName: cilium
+    hosts:
+      - prometheus-prod.rykelley.com
+    paths:
+      - /
+    pathType: Prefix
+    # DNS: prometheus-prod.rykelley.com -> prod Cilium Ingress VIP.
+    # Prerequisite: enable Cilium ingressController on homelab-2 (currently
+    # off in stacks/catalog/cluster-edge.yaml). Until then, use port-forward
+    # for verification.
+  prometheusSpec:
+    retention: 7d
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
+
+  # Same DCGM scrape shape as staging — GPU Operator already runs on prod
+  # (nvidia-dcgm-exporter in gpu-operator namespace).
+  additionalServiceMonitors:
+    - name: dcgm-exporter
+      namespaceSelector:
+        matchNames:
+          - gpu-operator
+      selector:
+        matchLabels:
+          app: nvidia-dcgm-exporter
+      endpoints:
+        - port: gpu-metrics
+          interval: 15s
+
+# kube-state-metrics / node-exporter stay enabled (chart defaults) so GPU node
+# capacity and node health are visible for later AnalysisTemplate checks.

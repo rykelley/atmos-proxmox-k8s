@@ -1,6 +1,8 @@
-# kube-prometheus-stack: Prometheus + Grafana + Alertmanager.
-# Grafana is exposed on 10.10.1.245 (pool in gitops/networking) and ships the
-# NVIDIA DCGM dashboard; Prometheus scrapes the GPU Operator's DCGM exporter.
+# kube-prometheus-stack on staging (homelab-1).
+# Values live in model-promotion/ (source of truth for the promotion pipeline).
+# Chart pin: 87.17.0 — matches the previously inline-managed release.
+#
+# Argo CD multi-source: Helm chart + $values ref into this Git repo.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -10,86 +12,17 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  source:
-    repoURL: https://prometheus-community.github.io/helm-charts
-    chart: kube-prometheus-stack
-    targetRevision: 87.17.0
-    helm:
-      values: |
-        grafana:
-          service:
-            type: LoadBalancer
-            annotations:
-              io.cilium/lb-ipam-ips: "10.10.1.245"
-          # Stable admin creds from an OUT-OF-BAND secret (not in Git), so the
-          # password survives pod recreation (Grafana has no PV here). Create it
-          # once:  kubectl -n monitoring create secret generic grafana-admin \
-          #          --from-literal=admin-user=admin \
-          #          --from-literal=admin-password='<your-password>'
-          admin:
-            existingSecret: grafana-admin
-            userKey: admin-user
-            passwordKey: admin-password
-          # Anonymous view access keeps LAN browsing simple; admin login still
-          # works (credentials in the grafana-admin secret above).
-          grafana.ini:
-            auth.anonymous:
-              enabled: true
-              org_role: Viewer
-          dashboardProviders:
-            dashboardproviders.yaml:
-              apiVersion: 1
-              providers:
-                - name: default
-                  orgId: 1
-                  folder: ""
-                  type: file
-                  disableDeletion: false
-                  editable: true
-                  options:
-                    path: /var/lib/grafana/dashboards/default
-          dashboards:
-            default:
-              nvidia-dcgm:
-                # NVIDIA DCGM Exporter dashboard (grafana.com/dashboards/12239)
-                gnetId: 12239
-                revision: 2
-                datasource: Prometheus
-              vllm:
-                # vLLM inference server dashboard (grafana.com/dashboards/23991)
-                # - queue depth, TTFT, tokens/sec, KV cache usage, latencies.
-                # Covers both the chat vLLM and the embeddings server (same
-                # binary, same vllm:* metric names, filterable by namespace).
-                gnetId: 23991
-                revision: 3
-                datasource: Prometheus
-          # Loki (gitops/apps/loki.yaml) stores logs shipped by Alloy
-          # (gitops/apps/alloy.yaml). This adds a "Loki" datasource so
-          # Grafana Explore can query logs alongside Prometheus metrics.
-          additionalDataSources:
-            - name: Loki
-              type: loki
-              access: proxy
-              url: http://loki-gateway.monitoring.svc.cluster.local
-              isDefault: false
-        prometheus:
-          prometheusSpec:
-            retention: 7d
-            # Watch ServiceMonitors/PodMonitors in every namespace, not just
-            # those carrying the Helm release label.
-            serviceMonitorSelectorNilUsesHelmValues: false
-            podMonitorSelectorNilUsesHelmValues: false
-          additionalServiceMonitors:
-            - name: dcgm-exporter
-              namespaceSelector:
-                matchNames:
-                  - gpu-operator
-              selector:
-                matchLabels:
-                  app: nvidia-dcgm-exporter
-              endpoints:
-                - port: gpu-metrics
-                  interval: 15s
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: 87.17.0
+      helm:
+        releaseName: monitoring
+        valueFiles:
+          - $values/model-promotion/monitoring/kube-prometheus-stack/staging-values.yaml
+    - repoURL: https://github.com/rykelley/atmos-proxmox-k8s.git
+      targetRevision: main
+      ref: values
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
