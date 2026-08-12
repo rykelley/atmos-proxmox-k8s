@@ -5,11 +5,11 @@
 # | Name               | UID              | URL                                                      |
 # |--------------------|------------------|----------------------------------------------------------|
 # | Prometheus         | (chart default)  | http://monitoring-kube-prometheus-prometheus.monitoring.svc:9090 |
-# | Prometheus-prod    | prometheus-prod  | http://10.10.1.249:9090  (prod LB VIP; DNS alias optional) |
+# | Prometheus-prod    | prometheus-prod  | http://10.10.1.251:9090  (prod LB VIP; DNS alias optional) |
 # | Loki               | (chart)          | http://loki-gateway.monitoring.svc.cluster.local         |
 #
 # DNS (optional):
-#   prometheus-prod.rykelley.com  ->  10.10.1.249
+#   prometheus-prod.rykelley.com  ->  10.10.1.251
 #   prometheus-staging.rykelley.com -> 10.10.1.248 (when cilium-ingress exists)
 #
 # Prod Prometheus LB requires CiliumLoadBalancerIPPool on homelab-2

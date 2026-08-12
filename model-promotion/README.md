@@ -192,7 +192,7 @@ Staging Grafana at **http://10.10.1.245** is the single pane. Prod has no Grafan
 | Name | Points at |
 |------|-----------|
 | Prometheus (default) | staging in-cluster Prometheus |
-| Prometheus-prod | `http://10.10.1.249:9090` (prod Cilium LB VIP) |
+| Prometheus-prod | `http://10.10.1.251:9090` (prod Cilium LB VIP) |
 | Loki | unchanged |
 
 ### Dashboards (sidecar ConfigMaps)
@@ -204,9 +204,9 @@ Staging Grafana at **http://10.10.1.245** is the single pane. Prod has no Grafan
 |------|---------|
 | `monitoring/grafana/datasources.yaml` | DS documentation |
 | `monitoring/dashboards/*` | JSON + ConfigMaps |
-| `monitoring/prod-prometheus-lb-pool.yaml` | Cilium pool/L2 for `.249` on **homelab-2** |
+| `monitoring/prod-prometheus-lb-pool.yaml` | Cilium pool/L2 for `.251` on **homelab-2** |
 | `monitoring/kube-prometheus-stack/staging-values.yaml` | adds Prometheus-prod DS |
-| `monitoring/kube-prometheus-stack/prod-values.yaml` | Prometheus LoadBalancer `.249` |
+| `monitoring/kube-prometheus-stack/prod-values.yaml` | Prometheus LoadBalancer `.251` |
 | `../gitops/apps/monitoring-dashboards.yaml` | multi-source includes these dashboards |
 
 ### Apply order (confirmation gates)

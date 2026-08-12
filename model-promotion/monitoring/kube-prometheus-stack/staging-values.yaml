@@ -55,7 +55,7 @@ grafana:
       uid: prometheus-prod
       type: prometheus
       access: proxy
-      url: http://10.10.1.249:9090
+      url: http://10.10.1.251:9090
       isDefault: false
       editable: true
     - name: Loki
