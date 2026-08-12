@@ -36,5 +36,6 @@ spec:
       release: monitoring
       app.kubernetes.io/instance: monitoring
   interfaces:
-    - "^(eth0|eno1)$"
+    # VMs: eth0; staging GPU: eno1; prod GPU (k3s-gpu2): eno4.
+    - "^(eth0|eno1|eno4)$"
   loadBalancerIPs: true
