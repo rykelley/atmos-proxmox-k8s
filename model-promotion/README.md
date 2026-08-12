@@ -36,8 +36,8 @@ Serving: vLLM. Models: Gemma 4 E4B (staging default), Gemma 4 26B A4B MoE 4-bit 
 | Phase | Scope | Status |
 |-------|--------|--------|
 | 1 | Monitoring foundation (Prometheus + DCGM on both clusters) | **done** |
-| 2 | vLLM chart + staging deploy | **in progress** |
-| 3 | Unified Grafana (both Prometheus datasources + dashboards) | pending |
+| 2 | vLLM chart + staging deploy | **done** |
+| 3 | Unified Grafana (both Prometheus datasources + dashboards) | **in progress** |
 | 4 | Argo CD multi-cluster + prod apps | pending |
 | 5 | Kargo project / warehouse / stages | pending |
 | 6 | AnalysisTemplate verification gate | pending |
@@ -184,6 +184,50 @@ curl -s localhost:8000/v1/models | jq .
 curl -s localhost:8000/metrics | grep -E 'time_to_first_token|generation_tokens|kv_cache|num_requests_waiting'
 ```
 
+## Phase 3 — Unified Grafana
+
+Staging Grafana at **http://10.10.1.245** is the single pane. Prod has no Grafana.
+
+### Datasources
+| Name | Points at |
+|------|-----------|
+| Prometheus (default) | staging in-cluster Prometheus |
+| Prometheus-prod | `http://10.10.1.249:9090` (prod Cilium LB VIP) |
+| Loki | unchanged |
+
+### Dashboards (sidecar ConfigMaps)
+- `inference-overview` — TTFT, tokens/s, KV%, queue, request success, DCGM util/FB/temp/power; datasource picker for staging vs prod
+- `cost-per-token` — power × `$/kWh` ÷ tokens; variable `electricity_rate_usd_per_kwh` (default **0.14**)
+
+### Files
+| Path | Purpose |
+|------|---------|
+| `monitoring/grafana/datasources.yaml` | DS documentation |
+| `monitoring/dashboards/*` | JSON + ConfigMaps |
+| `monitoring/prod-prometheus-lb-pool.yaml` | Cilium pool/L2 for `.249` on **homelab-2** |
+| `monitoring/kube-prometheus-stack/staging-values.yaml` | adds Prometheus-prod DS |
+| `monitoring/kube-prometheus-stack/prod-values.yaml` | Prometheus LoadBalancer `.249` |
+| `../gitops/apps/monitoring-dashboards.yaml` | multi-source includes these dashboards |
+
+### Apply order (confirmation gates)
+
+1. **Merge to main** → staging Argo picks up Grafana DS + dashboards automatically.
+2. **Prod LB** (explicit OK required):
+
+```bash
+kubectl --context homelab-2 apply -f model-promotion/monitoring/prod-prometheus-lb-pool.yaml
+helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+  --version 87.17.0 \
+  --kube-context homelab-2 \
+  --namespace monitoring \
+  -f model-promotion/monitoring/kube-prometheus-stack/prod-values.yaml
+```
+
+3. Verify from a LAN browser: Grafana Explore → Prometheus-prod → `up`; open both new dashboards; flip datasource to prod.
+
+### Metric note
+Live gemma4 image exposes `vllm:request_success_total{finished_reason=...}` (including `error`); there is no separate `request_failure_total`. AnalysisTemplate (Phase 6) should treat `finished_reason="error"` as failures.
+
 ## Later phases (stubs)
 
-Kargo + AnalysisTemplate + Grafana annotations land in Phases 3–7. Existing `apps/vllm*`, `kargo/`, and `gitops/` remain until each phase cuts over deliberately.
+Kargo + AnalysisTemplate + Grafana annotations land in Phases 4–7. Existing `apps/vllm*`, `kargo/`, and `gitops/` remain until each phase cuts over deliberately.
