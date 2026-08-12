@@ -30,6 +30,11 @@ spec:
       # pinned targetRevision.
       valueFiles:
         - env/staging.yaml
+      # Phase 2: free shared 16GB VRAM for model-promotion Gemma 4 E4B.
+      # Remove this parameter (or set "1") when restoring the canary pipeline.
+      parameters:
+        - name: replicas
+          value: "0"
   destination:
     server: https://kubernetes.default.svc
     namespace: vllm-pipeline

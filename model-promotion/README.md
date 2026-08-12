@@ -35,8 +35,8 @@ Serving: vLLM. Models: Gemma 4 E4B (staging default), Gemma 4 26B A4B MoE 4-bit 
 
 | Phase | Scope | Status |
 |-------|--------|--------|
-| 1 | Monitoring foundation (Prometheus + DCGM on both clusters) | **in progress** |
-| 2 | vLLM chart + staging deploy | pending |
+| 1 | Monitoring foundation (Prometheus + DCGM on both clusters) | **done** |
+| 2 | vLLM chart + staging deploy | **in progress** |
 | 3 | Unified Grafana (both Prometheus datasources + dashboards) | pending |
 | 4 | Argo CD multi-cluster + prod apps | pending |
 | 5 | Kargo project / warehouse / stages | pending |
@@ -48,7 +48,7 @@ Serving: vLLM. Models: Gemma 4 E4B (staging default), Gemma 4 26B A4B MoE 4-bit 
 ### What already exists
 
 - **homelab-1 (staging):** `kube-prometheus-stack` in `monitoring` (Argo app `monitoring`), DCGM exporter in `gpu-operator`, ServiceMonitor `dcgm-exporter`, Grafana at `10.10.1.245`.
-- **homelab-2 (prod):** GPU Operator + DCGM exporter running; **no** Prometheus yet.
+- **homelab-2 (prod):** kube-prometheus-stack installed via Helm (Phase 1 approval); Grafana disabled; DCGM scraped.
 
 ### Chart pin
 
@@ -122,8 +122,68 @@ Then repeat the same four DCGM queries against prod Prometheus.
 
 - Never run apply/sync against **homelab-2** without an explicit confirmation in chat.
 - Prod Stage (later) keeps a **manual approval** button in Kargo even after AnalysisTemplate passes.
-- Image digests and freight pinning land in Phases 2/5 — not Phase 1.
+- Image digests and freight pinning land in Phases 2/5.
+
+## Phase 2 — vLLM chart + staging deploy
+
+### 16GB model sizing
+
+| Env | Model | Quantization | max-model-len | Why |
+|-----|--------|--------------|---------------|-----|
+| staging | `google/gemma-4-E4B-it` | `bitsandbytes` | 8192 | BF16 ≈ 17.9 GiB does **not** fit 16GB; Q4-class weights ≈ 4.5 GiB + KV headroom |
+| prod (stub) | `google/gemma-4-26B-A4B-it` | `bitsandbytes` | 4096 | Q4 ≈ 14.4 GiB weights — tight; short context for KV |
+
+Image: `vllm/vllm-openai:gemma4` pinned to linux/amd64 digest `sha256:8e86cb93b724092cd4dc892fb129a6c5538613b38a5cd34e40aab9e6aea72b03`.
+
+### Files
+
+| Path | Purpose |
+|------|---------|
+| `charts/vllm-server/` | Deployment, Service, ServiceMonitor; digest-pinned image; `/v1/models` probes |
+| `envs/staging/values.yaml` | E4B + bitsandbytes |
+| `envs/prod/values.yaml` | 26B A4B stub — **not applied** in Phase 2 |
+| `../gitops/apps/vllm-promo-staging.yaml` | Argo app → staging only |
+
+### HuggingFace token
+
+You do **not** currently have an `HF_TOKEN` Secret on either cluster (checked). Gemma 4 weights are Apache-2.0 / public, so the pod can start without a token, but anonymous HF downloads are rate-limited — a token is strongly recommended.
+
+1. Create a free account at https://huggingface.co/join  
+2. Create a token: https://huggingface.co/settings/tokens (read access is enough)  
+3. After the `vllm-promo` namespace exists:
+
+```bash
+kubectl --context homelab-1 -n vllm-promo create secret generic hf-token \
+  --from-literal=HF_TOKEN='hf_...'
+# then set hfTokenSecret: "hf-token" in envs/staging/values.yaml and sync
+```
+
+### Free GPU VRAM on staging (required)
+
+Scale down competing GPU workloads before first sync (time-sliced VRAM is shared):
+
+```bash
+# Helmfile-managed chat vLLM
+kubectl --context homelab-1 -n vllm scale deploy/vllm --replicas=0
+
+# Argo-managed — disable auto-sync first so self-heal does not restore replicas
+kubectl --context homelab-1 -n argocd patch app embeddings --type json \
+  -p '[{"op":"remove","path":"/spec/syncPolicy/automated"}]'
+kubectl --context homelab-1 -n argocd patch app vllm-pipeline-staging --type json \
+  -p '[{"op":"remove","path":"/spec/syncPolicy/automated"}]'
+kubectl --context homelab-1 -n rag scale deploy/embeddings --replicas=0
+kubectl --context homelab-1 -n vllm-pipeline scale rollout/vllm-pipeline --replicas=0
+```
+
+### Verify (after merge + sync)
+
+```bash
+kubectl --context homelab-1 -n vllm-promo get deploy,pods,svc,servicemonitor
+kubectl --context homelab-1 -n vllm-promo port-forward svc/vllm-promo 8000:8000
+curl -s localhost:8000/v1/models | jq .
+curl -s localhost:8000/metrics | grep -E 'time_to_first_token|generation_tokens|kv_cache|num_requests_waiting'
+```
 
 ## Later phases (stubs)
 
-Directories for charts, envs, kargo, and automation will appear as those phases start. Existing `apps/vllm*`, `kargo/`, and `gitops/` remain the live system until each phase cuts over deliberately.
+Kargo + AnalysisTemplate + Grafana annotations land in Phases 3–7. Existing `apps/vllm*`, `kargo/`, and `gitops/` remain until each phase cuts over deliberately.
