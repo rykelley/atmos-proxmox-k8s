@@ -1,7 +1,10 @@
-# Prod (homelab-2) — STUB for later phases. Do NOT apply in Phase 2.
+# Prod (homelab-2) — Gemma 4 26B A4B MoE at 4-bit for 16GB VRAM.
 #
-# Gemma 4 26B A4B MoE at 4-bit: Google lists Q4_0 ≈ 14.4 GiB weights on a 16GB
-# card — fits with slim KV only. Keep maxModelLen low and util high-but-not-max.
+# Deployed only via gitops/apps/vllm-promo-prod.yaml after an explicit Sync
+# confirmation (Application has automated sync OFF).
+#
+# VRAM: Google Q4_0 ≈ 14.4 GiB weights; maxModelLen 4096 + util 0.92 leave slim
+# KV headroom. Watch DCGM_FI_DEV_FB_USED and vllm:kv_cache_usage_perc after sync.
 namespace: vllm-promo
 appName: vllm-promo
 

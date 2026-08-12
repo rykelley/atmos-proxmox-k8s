@@ -80,6 +80,21 @@ components:
         service_cidr: "10.43.0.0/16"
         cluster_dns: "10.43.0.10"
 
+    # Same component dir as `k3s`, different playbook: installs nfs-common on
+    # every node without running the rest of the site play. Not part of
+    # deploy-cluster (the common role covers it there) — this is for adding NFS
+    # storage to a cluster that is already up.
+    k3s-nfs-client:
+      metadata:
+        component: k3s
+      settings:
+        ansible:
+          playbook: nfs-client.yml
+          inventory: inventory/hosts.yml
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: "false"
+        ANSIBLE_FORCE_COLOR: "true"
+
   helmfile:
     cilium:
       metadata:

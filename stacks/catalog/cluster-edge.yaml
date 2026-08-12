@@ -104,6 +104,18 @@ components:
         # managed side by side (helmfile below points KUBECONFIG here too).
         kubeconfig_local_path: '{{ env "HOME" }}/.kube/atmos-k3s-edge.yaml'
 
+    # See the prod catalog: narrow NFS-client install against cluster-B's nodes.
+    k3s-nfs-client:
+      metadata:
+        component: k3s
+      settings:
+        ansible:
+          playbook: nfs-client.yml
+          inventory: inventory/hosts-edge.yml
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: "false"
+        ANSIBLE_FORCE_COLOR: "true"
+
   helmfile:
     cilium:
       metadata:

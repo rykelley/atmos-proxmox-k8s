@@ -1,0 +1,40 @@
+# kube-prometheus-stack on prod (homelab-2) — Argo-managed twin of the Helm
+# install performed in Phase 1/3.
+#
+# SAFETY: automated sync is OFF. Prod monitoring is already live via Helm; the
+# first Sync adopts/reconciles that release. Only Sync after confirming you want
+# Argo (not Helm CLI) to own it going forward.
+#
+# Destination: cluster-b (registered). Values: model-promotion/.../prod-values.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring-prod
+  namespace: argocd
+  annotations:
+    model-promotion.rykelley.com/apply-gate: "requires-explicit-confirmation"
+    model-promotion.rykelley.com/phase: "4"
+    model-promotion.rykelley.com/cluster: prod
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: 87.17.0
+      helm:
+        releaseName: monitoring
+        valueFiles:
+          - $values/model-promotion/monitoring/kube-prometheus-stack/prod-values.yaml
+    - repoURL: https://github.com/rykelley/atmos-proxmox-k8s.git
+      targetRevision: main
+      ref: values
+  destination:
+    name: cluster-b
+    namespace: monitoring
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

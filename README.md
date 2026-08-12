@@ -130,6 +130,21 @@ export KUBECONFIG=$PWD/components/ansible/k3s/fetched/kubeconfig
 kubectl get nodes -o wide
 ```
 
+### NFS client
+
+`nfs-common` is installed by the `common` role during a full run, so a freshly
+deployed cluster already has it. To add it to a cluster that is already up
+(before pointing a StorageClass or PV at an NFS export) run the narrow playbook
+[`components/ansible/k3s/nfs-client.yml`](components/ansible/k3s/nfs-client.yml)
+instead of the whole site play:
+
+```bash
+atmos ansible playbook k3s-nfs-client -s prod     # -s edge for cluster-B
+
+# Optionally confirm every node can see the exports:
+atmos ansible playbook k3s-nfs-client -s prod -- -e nfs_server=10.10.1.20
+```
+
 ## Configuration
 
 All cluster-wide settings live in
@@ -449,6 +464,24 @@ kubectl -n argocd label secret repo-atmos-proxmox-k8s argocd.argoproj.io/secret-
 # Option B: make the GitHub repo public (no secret needed)
 ```
 
+### Prerequisite: Grafana admin secret
+
+Grafana reads its admin login from an **out-of-band** secret (`grafana-admin`, not
+in Git) so the password is stable across pod restarts — Grafana has no PV, so a
+UI-set password would otherwise be lost. Create it **before** Argo syncs
+`monitoring` (the pod won't start without it):
+
+```bash
+export KUBECONFIG=$PWD/components/ansible/k3s/fetched/kubeconfig
+kubectl create namespace monitoring 2>/dev/null || true
+kubectl -n monitoring create secret generic grafana-admin \
+  --from-literal=admin-user=admin \
+  --from-literal=admin-password='<your-password>'
+```
+
+To change it later: update the secret and
+`kubectl -n monitoring rollout restart deploy/monitoring-grafana`.
+
 ### Deploy
 
 ```bash
@@ -693,10 +726,13 @@ core GitOps workflow this layer is meant to teach.
 
 - **Grafana admin login fails ("invalid password" / "user not found"):** the only
   account is the built-in `admin` (not your email); anonymous **Viewer** access
-  still works for browsing. Get the password from the chart-managed secret with
-  `kubectl -n monitoring get secret monitoring-grafana -o jsonpath='{.data.admin-password}' | base64 -d`.
-  Do **not** change it in the UI - kube-prometheus-stack re-applies the secret on
-  restart and reverts it.
+  still works for browsing. The credentials come from the out-of-band
+  `grafana-admin` secret (see "Prerequisite: Grafana admin secret"). Read the
+  current value with
+  `kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d`.
+  Don't change it in the UI (no PV — a UI change is lost on pod recreation);
+  instead update the `grafana-admin` secret and
+  `kubectl -n monitoring rollout restart deploy/monitoring-grafana`.
 
 ## Teardown
 

@@ -37,8 +37,8 @@ Serving: vLLM. Models: Gemma 4 E4B (staging default), Gemma 4 26B A4B MoE 4-bit 
 |-------|--------|--------|
 | 1 | Monitoring foundation (Prometheus + DCGM on both clusters) | **done** |
 | 2 | vLLM chart + staging deploy | **done** |
-| 3 | Unified Grafana (both Prometheus datasources + dashboards) | **in progress** |
-| 4 | Argo CD multi-cluster + prod apps | pending |
+| 3 | Unified Grafana (both Prometheus datasources + dashboards) | **done** |
+| 4 | Argo CD multi-cluster + prod | **in progress** |
 | 5 | Kargo project / warehouse / stages | pending |
 | 6 | AnalysisTemplate verification gate | pending |
 | 7 | Grafana annotations + runbook polish | pending |
@@ -228,6 +228,37 @@ helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
 ### Metric note
 Live gemma4 image exposes `vllm:request_success_total{finished_reason=...}` (including `error`); there is no separate `request_failure_total`. AnalysisTemplate (Phase 6) should treat `finished_reason="error"` as failures.
 
+## Phase 4 — Argo CD multi-cluster + prod
+
+**Already true:** hub Argo on staging has remote cluster Secret `cluster-b` (`https://10.10.1.50:6443`). Existing apps `vllm-pipeline-prod` and `argo-rollouts-cluster-b` prove multi-cluster sync works.
+
+### Files
+| Path | Purpose |
+|------|---------|
+| `../gitops/apps/model-promotion-project.yaml` | AppProject for staging + cluster-b destinations |
+| `../gitops/apps/vllm-promo-prod.yaml` | Prod vLLM Application — **manual sync only** |
+| `../gitops/apps/monitoring-prod.yaml` | Prod monitoring Application — **manual sync only** (Helm already owns the release) |
+| `envs/prod/values.yaml` | Gemma 4 26B A4B + bitsandbytes + digest pin |
+
+### After merge (Application CRs appear; no pods until Sync)
+1. Confirm in Argo UI: `vllm-promo-prod` and `monitoring-prod` exist, destination `cluster-b`, sync status **Unknown/OutOfSync**, automation **off**.
+2. **Do not Sync** `vllm-promo-prod` until you confirm — model pull is large and takes the single GPU on `k3s-gpu2`.
+3. Optional: adopt monitoring under Argo with a manual Sync of `monitoring-prod` (reconciles the existing Helm release).
+
+### Prod vLLM Sync checklist (confirmation gate)
+```bash
+# GPU free?
+kubectl --context homelab-2 get pods -A -o wide | rg 'nvidia.com/gpu|vllm|gpu'
+# Then Sync only after explicit OK:
+#   Argo UI → vllm-promo-prod → Sync
+# Verify:
+kubectl --context homelab-2 -n vllm-promo get deploy,pods,servicemonitor
+kubectl --context homelab-2 -n vllm-promo port-forward svc/vllm-promo 8000:8000
+curl -s localhost:8000/v1/models | jq .
+```
+
 ## Later phases (stubs)
 
-Kargo + AnalysisTemplate + Grafana annotations land in Phases 4–7. Existing `apps/vllm*`, `kargo/`, and `gitops/` remain until each phase cuts over deliberately.
+**Phase 5** Kargo Warehouse/Stages promoting digests into `envs/*/values.yaml`.  
+**Phase 6** AnalysisTemplate PromQL gate on staging before prod.  
+**Phase 7** Grafana annotations API + failure-mode runbook.
