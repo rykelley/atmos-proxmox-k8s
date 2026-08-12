@@ -1,0 +1,49 @@
+# Staging (homelab-1) — Gemma 4 E4B sized for a single 16GB RTX PRO 2000.
+#
+# VRAM budget (weights, Google published Q4 ~4.5 GiB; BF16 ~17.9 GiB does NOT fit):
+#   - Use bitsandbytes quantization so weights fit with KV-cache headroom.
+#   - maxModelLen 8192 keeps KV modest on 16GB; raise only after watching
+#     vllm:kv_cache_usage_perc under load.
+#   - gpuMemoryUtilization 0.90 leaves ~1.6GB for fragmentation / CUDA context.
+#
+# Image: official Gemma 4 recipe tag, pinned to the linux/amd64 digest
+# resolved 2026-08-09 from vllm/vllm-openai:gemma4.
+namespace: vllm-promo
+appName: vllm-promo
+
+image:
+  repository: vllm/vllm-openai
+  tag: "gemma4" # human label only
+  digest: "sha256:8e86cb93b724092cd4dc892fb129a6c5538613b38a5cd34e40aab9e6aea72b03"
+  pullPolicy: IfNotPresent
+
+model:
+  name: "google/gemma-4-E4B-it"
+  maxModelLen: 8192
+  gpuMemoryUtilization: "0.90"
+  quantization: "bitsandbytes"
+  extraArgs: []
+
+gpu:
+  count: 1
+
+resources:
+  requests:
+    cpu: "4"
+    memory: 12Gi
+  limits:
+    cpu: "8"
+    memory: 24Gi
+
+modelCache:
+  size: "40Gi"
+  storageClassName: local-path
+
+# Optional. Leave empty to start without a token (public Apache-2.0 weights).
+# Set to "hf-token" after creating the Secret if you hit HF rate limits:
+#   kubectl --context homelab-1 -n vllm-promo create secret generic hf-token \
+#     --from-literal=HF_TOKEN='hf_...'
+hfTokenSecret: ""
+
+serviceMonitor:
+  enabled: true

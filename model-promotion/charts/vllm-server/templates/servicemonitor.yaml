@@ -1,0 +1,24 @@
+{{- if .Values.serviceMonitor.enabled }}
+# Scrapes vLLM /metrics (TTFT histograms, token counters, KV cache %, queue depth).
+# Metric names vary by vLLM version — verify with:
+#   kubectl -n {{ .Values.namespace }} port-forward svc/{{ .Values.appName }} 8000:8000
+#   curl -s localhost:8000/metrics | grep -E 'time_to_first_token|generation_tokens|kv_cache|num_requests_waiting|request_success|request_failure'
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.appName }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "vllm-server.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "vllm-server.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  endpoints:
+    - port: http
+      path: {{ .Values.serviceMonitor.path }}
+      interval: {{ .Values.serviceMonitor.interval }}
+{{- end }}

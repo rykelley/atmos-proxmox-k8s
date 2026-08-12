@@ -1,0 +1,39 @@
+# Prod (homelab-2) — STUB for later phases. Do NOT apply in Phase 2.
+#
+# Gemma 4 26B A4B MoE at 4-bit: Google lists Q4_0 ≈ 14.4 GiB weights on a 16GB
+# card — fits with slim KV only. Keep maxModelLen low and util high-but-not-max.
+namespace: vllm-promo
+appName: vllm-promo
+
+image:
+  repository: vllm/vllm-openai
+  tag: "gemma4"
+  digest: "sha256:8e86cb93b724092cd4dc892fb129a6c5538613b38a5cd34e40aab9e6aea72b03"
+  pullPolicy: IfNotPresent
+
+model:
+  name: "google/gemma-4-26B-A4B-it"
+  maxModelLen: 4096
+  gpuMemoryUtilization: "0.92"
+  quantization: "bitsandbytes"
+  extraArgs: []
+
+gpu:
+  count: 1
+
+resources:
+  requests:
+    cpu: "4"
+    memory: 16Gi
+  limits:
+    cpu: "8"
+    memory: 28Gi
+
+modelCache:
+  size: "80Gi"
+  storageClassName: local-path
+
+hfTokenSecret: ""
+
+serviceMonitor:
+  enabled: true

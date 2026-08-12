@@ -14,7 +14,7 @@ metadata:
     app.kubernetes.io/name: embeddings
     app.kubernetes.io/part-of: rag
 spec:
-  replicas: 1
+  replicas: 0  # Phase 2: freed GPU VRAM for vllm-promo (Gemma 4 E4B). Restore to 1 when promo is idle.
   strategy:
     type: Recreate
   selector:

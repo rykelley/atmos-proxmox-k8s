@@ -1,0 +1,72 @@
+# Chart defaults — overridden per env under model-promotion/envs/.
+appName: vllm-promo
+namespace: vllm-promo
+
+image:
+  repository: vllm/vllm-openai
+  # Floating tag kept for humans only; rendered manifests MUST use digest.
+  tag: "gemma4"
+  digest: ""
+  pullPolicy: IfNotPresent
+
+replicas: 1
+
+model:
+  # HuggingFace model id (overridden per env).
+  name: "google/gemma-4-E4B-it"
+  maxModelLen: 8192
+  # Fraction of free GPU memory for weights + KV. Keep headroom on 16GB cards.
+  gpuMemoryUtilization: "0.90"
+  # Empty string disables --quantization. Use bitsandbytes / fp8 / etc. for 16GB.
+  quantization: "bitsandbytes"
+  extraArgs: []
+
+gpu:
+  count: 1
+  runtimeClassName: nvidia
+  nodeSelector:
+    nvidia.com/gpu.present: "true"
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+resources:
+  requests:
+    cpu: "4"
+    memory: 12Gi
+  limits:
+    cpu: "8"
+    memory: 24Gi
+
+# PVC when size != "0"; otherwise emptyDir (ephemeral).
+modelCache:
+  size: "40Gi"
+  storageClassName: local-path
+
+shmSize: 8Gi
+
+# Optional Secret in this namespace with key HF_TOKEN (gated models / higher HF rate limits).
+hfTokenSecret: ""
+
+service:
+  port: 8000
+  type: ClusterIP
+
+serviceMonitor:
+  enabled: true
+  interval: 15s
+  path: /metrics
+
+# Probes hit the OpenAI-compatible models list (not bare TCP /health alone).
+probes:
+  startup:
+    path: /v1/models
+    periodSeconds: 15
+    failureThreshold: 80
+  readiness:
+    path: /v1/models
+    periodSeconds: 10
+  liveness:
+    path: /v1/models
+    periodSeconds: 20
