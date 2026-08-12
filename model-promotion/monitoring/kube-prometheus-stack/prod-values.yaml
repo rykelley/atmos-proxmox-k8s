@@ -1,13 +1,9 @@
 # Prod (homelab-2) — kube-prometheus-stack values.
 # Chart: prometheus-community/kube-prometheus-stack 87.17.0 (same pin as staging).
 #
-# Grafana is intentionally DISABLED here. Phase 3 adds prod Prometheus as a
-# second datasource on the staging Grafana (prometheus-prod.rykelley.com).
-#
-# Consumed by gitops/apps/monitoring-prod.yaml (prepared; do NOT sync until
-# Argo CD has the prod remote cluster registered — Phase 4 — and you approve).
+# Grafana DISABLED — unified UI is staging Grafana with Prometheus-prod DS.
+# Phase 3 exposes Prometheus on Cilium LB 10.10.1.249 for cross-cluster scrape UI.
 
-# Disable Grafana on prod — unified UI lives on staging.
 grafana:
   enabled: false
 
@@ -15,6 +11,10 @@ alertmanager:
   enabled: true
 
 prometheus:
+  service:
+    type: LoadBalancer
+    annotations:
+      io.cilium/lb-ipam-ips: "10.10.1.249"
   ingress:
     enabled: true
     ingressClassName: cilium
@@ -23,14 +23,15 @@ prometheus:
     paths:
       - /
     pathType: Prefix
-    # DNS: prometheus-prod.rykelley.com -> prod Cilium Ingress VIP.
-    # Prerequisite: enable Cilium ingressController on homelab-2 (currently
-    # off in stacks/catalog/cluster-edge.yaml). Until then, use port-forward
-    # for verification.
+    # Optional once Ingress exists; primary path is LB .249 above.
   prometheusSpec:
     retention: 7d
     serviceMonitorSelectorNilUsesHelmValues: false
     podMonitorSelectorNilUsesHelmValues: false
+    # Allow Grafana on staging (and LAN browsers) to query this Prometheus.
+    # Homelab trust boundary = LAN; tighten later if needed.
+    enableRemoteWriteReceiver: false
+    externalUrl: http://10.10.1.249:9090
     storageSpec:
       volumeClaimTemplate:
         spec:
@@ -40,8 +41,6 @@ prometheus:
             requests:
               storage: 20Gi
 
-  # Same DCGM scrape shape as staging — GPU Operator already runs on prod
-  # (nvidia-dcgm-exporter in gpu-operator namespace).
   additionalServiceMonitors:
     - name: dcgm-exporter
       namespaceSelector:
@@ -53,6 +52,3 @@ prometheus:
       endpoints:
         - port: gpu-metrics
           interval: 15s
-
-# kube-state-metrics / node-exporter stay enabled (chart defaults) so GPU node
-# capacity and node health are visible for later AnalysisTemplate checks.

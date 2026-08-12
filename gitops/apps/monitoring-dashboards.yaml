@@ -3,6 +3,8 @@
 # dashboard JSON lives in plain files rather than inline Helm values. The
 # grafana-sc-dashboard sidecar (NAMESPACE=ALL, label grafana_dashboard=1)
 # auto-imports anything synced here into Grafana.
+#
+# Multi-source: legacy gitops dashboards + model-promotion Phase 3 dashboards.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -12,10 +14,16 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  source:
-    repoURL: https://github.com/rykelley/atmos-proxmox-k8s.git
-    targetRevision: main
-    path: gitops/monitoring-dashboards
+  sources:
+    - repoURL: https://github.com/rykelley/atmos-proxmox-k8s.git
+      targetRevision: main
+      path: gitops/monitoring-dashboards
+    - repoURL: https://github.com/rykelley/atmos-proxmox-k8s.git
+      targetRevision: main
+      path: model-promotion/monitoring/dashboards
+      directory:
+        # Only sync ConfigMaps; leave raw .json as reviewable source next to them.
+        include: "*.yaml"
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
