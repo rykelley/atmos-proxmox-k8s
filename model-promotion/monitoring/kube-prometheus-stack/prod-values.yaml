@@ -2,7 +2,7 @@
 # Chart: prometheus-community/kube-prometheus-stack 87.17.0 (same pin as staging).
 #
 # Grafana DISABLED — unified UI is staging Grafana with Prometheus-prod DS.
-# Phase 3 exposes Prometheus on Cilium LB 10.10.1.249 for cross-cluster scrape UI.
+# Phase 3 exposes Prometheus on Cilium LB 10.10.1.251 for cross-cluster scrape UI.
 
 grafana:
   enabled: false
@@ -14,7 +14,7 @@ prometheus:
   service:
     type: LoadBalancer
     annotations:
-      io.cilium/lb-ipam-ips: "10.10.1.249"
+      io.cilium/lb-ipam-ips: "10.10.1.251"
   ingress:
     enabled: true
     ingressClassName: cilium
@@ -23,7 +23,7 @@ prometheus:
     paths:
       - /
     pathType: Prefix
-    # Optional once Ingress exists; primary path is LB .249 above.
+    # Optional once Ingress exists; primary path is LB .251 above.
   prometheusSpec:
     retention: 7d
     serviceMonitorSelectorNilUsesHelmValues: false
@@ -31,7 +31,7 @@ prometheus:
     # Allow Grafana on staging (and LAN browsers) to query this Prometheus.
     # Homelab trust boundary = LAN; tighten later if needed.
     enableRemoteWriteReceiver: false
-    externalUrl: http://10.10.1.249:9090
+    externalUrl: http://10.10.1.251:9090
     storageSpec:
       volumeClaimTemplate:
         spec:

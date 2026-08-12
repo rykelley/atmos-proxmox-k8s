@@ -3,7 +3,7 @@
 #
 #   kubectl --context homelab-2 apply -f model-promotion/monitoring/prod-prometheus-lb-pool.yaml
 #
-# Then helm-upgrade monitoring with updated prod-values.yaml (LoadBalancer .249).
+# Then helm-upgrade monitoring with updated prod-values.yaml (LoadBalancer .251).
 ---
 apiVersion: cilium.io/v2alpha1
 kind: CiliumLoadBalancerIPPool
@@ -13,8 +13,8 @@ metadata:
     app.kubernetes.io/part-of: model-promotion
 spec:
   blocks:
-    - start: "10.10.1.249"
-      stop: "10.10.1.249"
+    - start: "10.10.1.251"
+      stop: "10.10.1.251"
   serviceSelector:
     matchLabels:
       # Labels present on the kube-prometheus-stack Prometheus Service
