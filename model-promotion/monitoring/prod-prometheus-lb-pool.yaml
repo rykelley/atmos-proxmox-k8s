@@ -17,8 +17,10 @@ spec:
       stop: "10.10.1.249"
   serviceSelector:
     matchLabels:
-      # kube-prometheus-stack labels the Prometheus Service with this name.
-      app.kubernetes.io/name: prometheus
+      # Labels present on the kube-prometheus-stack Prometheus Service
+      # (metadata.labels — not the pod selector).
+      app: kube-prometheus-stack-prometheus
+      release: monitoring
       app.kubernetes.io/instance: monitoring
 ---
 apiVersion: cilium.io/v2alpha1
@@ -30,7 +32,8 @@ metadata:
 spec:
   serviceSelector:
     matchLabels:
-      app.kubernetes.io/name: prometheus
+      app: kube-prometheus-stack-prometheus
+      release: monitoring
       app.kubernetes.io/instance: monitoring
   interfaces:
     - "^(eth0|eno1)$"
