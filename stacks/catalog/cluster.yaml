@@ -260,6 +260,33 @@ components:
         hubble_gateway_hostname: ""
         hubble_lb_ip: "10.10.1.241"
 
+    # RWX storage backed by the Synology NAS. The `nfs-client` StorageClass it
+    # creates is what stateful workloads should use when they need a volume that
+    # is not pinned to a single node (local-path is).
+    nfs-provisioner:
+      metadata:
+        component: nfs-provisioner
+      settings:
+        depends_on:
+          1:
+            component: cilium
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
+      vars:
+        nfs_provisioner_namespace: "nfs-provisioning"
+        nfs_provisioner_chart_version: "4.0.18"
+        nfs_provisioner_image_tag: "v4.0.2"
+        # Synology NAS. `nfs_path` must be an actual export (`showmount -e`),
+        # not just a shared folder that exists in DSM.
+        nfs_server: "10.10.1.40"
+        nfs_path: "/volume1/NFS"
+        nfs_storage_class_name: "nfs-client"
+        # k3s already ships local-path as the default StorageClass; opt into
+        # nfs-client per-PVC via storageClassName rather than making the
+        # cluster have two defaults.
+        nfs_storage_class_default: false
+        nfs_archive_on_delete: false
+
     kyverno:
       metadata:
         component: kyverno
