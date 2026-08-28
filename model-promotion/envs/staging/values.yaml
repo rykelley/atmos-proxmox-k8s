@@ -27,7 +27,7 @@ model:
 gpu:
   count: 1
 
-replicaCount: 0 
+replicas: 0 
 
 resources:
   requests:
