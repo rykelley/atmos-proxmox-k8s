@@ -27,7 +27,7 @@ model:
 gpu:
   count: 1
 
-replicas: replicas: {{ if hasKey .Values "replicas" }}{{ .Values.replicas }}{{ else }}1{{ end }}
+replicas: {{ if hasKey .Values "replicas" }}{{ .Values.replicas }}{{ else }}1{{ end }}
 
 resources:
   requests:
