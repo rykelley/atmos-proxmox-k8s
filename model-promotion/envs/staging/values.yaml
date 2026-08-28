@@ -27,6 +27,8 @@ model:
 gpu:
   count: 1
 
+replicaCount: 0 
+
 resources:
   requests:
     cpu: "4"
