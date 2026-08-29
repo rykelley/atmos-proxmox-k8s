@@ -20,12 +20,14 @@ image:
 model:
   name: "google/gemma-4-E4B-it"
   maxModelLen: 8192
-  gpuMemoryUtilization: "0.90"
+  gpuMemoryUtilization: "0.80"
   quantization: "bitsandbytes"
   extraArgs: []
 
 gpu:
   count: 1
+
+replicas: {{ if hasKey .Values "replicas" }}{{ .Values.replicas }}{{ else }}1{{ end }}
 
 resources:
   requests:

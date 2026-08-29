@@ -88,8 +88,8 @@ apps/
   vllm/                           # vLLM Helm chart (Deployment + LB Service + Cilium LB pool)
 gitops/                           # Argo CD app-of-apps (RAG platform + monitoring + logging)
   root-app.yaml                   # app-of-apps root Application
-  apps/                           # child Applications (monitoring, monitoring-dashboards, loki, alloy, qdrant, embeddings, open-webui, networking, cluster-tools)
-  networking/                     # Cilium LB pools for open-webui + grafana (L2-announced on eth0|eno1)
+  apps/                           # child Applications (monitoring, monitoring-dashboards, loki, alloy, qdrant, embeddings, open-webui, networking, cluster-tools, zot)
+  networking/                     # Cilium LB pools for open-webui + grafana + zot (L2-announced on eth0|eno1)
   embeddings/                     # GPU embeddings server (vLLM embed mode) manifests
   monitoring-dashboards/          # custom Grafana dashboards as sidecar ConfigMaps (GPU + vLLM Overview)
   cluster-tools/                  # read-only OpenAPI tool server ("chat with your cluster")
@@ -128,6 +128,33 @@ After Ansible runs, a kubeconfig pointing at the VIP is written to
 ```bash
 export KUBECONFIG=$PWD/components/ansible/k3s/fetched/kubeconfig
 kubectl get nodes -o wide
+```
+
+### NFS client
+
+`nfs-common` is installed by the `common` role during a full run, so a freshly
+deployed cluster already has it. To add it to a cluster that is already up
+(before pointing a StorageClass or PV at an NFS export) run the narrow playbook
+[`components/ansible/k3s/nfs-client.yml`](components/ansible/k3s/nfs-client.yml)
+instead of the whole site play:
+
+```bash
+atmos ansible playbook k3s-nfs-client -s prod     # -s edge for cluster-B
+
+# Optionally confirm every node can see the exports:
+atmos ansible playbook k3s-nfs-client -s prod -- -e nfs_server=10.10.1.20
+```
+
+The `nfs-provisioner` component turns that export into the **`nfs-client`
+StorageClass**, which is the **cluster default** - a PVC with no
+`storageClassName` lands on the NAS (RWX, survives losing a node). k3s'
+`local-path` is still installed for workloads that name it explicitly, but its
+default annotation is cleared by a postsync hook. k3s re-adds that annotation
+on server restart or upgrade, so re-apply if `kubectl get sc` ever shows two
+defaults:
+
+```bash
+atmos helmfile apply nfs-provisioner -s prod -- --skip-diff-on-install
 ```
 
 ## Configuration
@@ -449,6 +476,24 @@ kubectl -n argocd label secret repo-atmos-proxmox-k8s argocd.argoproj.io/secret-
 # Option B: make the GitHub repo public (no secret needed)
 ```
 
+### Prerequisite: Grafana admin secret
+
+Grafana reads its admin login from an **out-of-band** secret (`grafana-admin`, not
+in Git) so the password is stable across pod restarts — Grafana has no PV, so a
+UI-set password would otherwise be lost. Create it **before** Argo syncs
+`monitoring` (the pod won't start without it):
+
+```bash
+export KUBECONFIG=$PWD/components/ansible/k3s/fetched/kubeconfig
+kubectl create namespace monitoring 2>/dev/null || true
+kubectl -n monitoring create secret generic grafana-admin \
+  --from-literal=admin-user=admin \
+  --from-literal=admin-password='<your-password>'
+```
+
+To change it later: update the secret and
+`kubectl -n monitoring rollout restart deploy/monitoring-grafana`.
+
 ### Deploy
 
 ```bash
@@ -606,6 +651,55 @@ bump a chart version or tweak Open WebUI env), commit, and push to `main`. Argo
 CD detects the change and syncs it - no `helmfile`/`kubectl` needed. This is the
 core GitOps workflow this layer is meant to teach.
 
+## Container registry (zot)
+
+[zot](https://zotregistry.dev/) is an OCI-native registry that gives the cluster
+somewhere to push its own images without going out to GHCR. It is another Argo
+CD Application ([gitops/apps/zot.yaml](gitops/apps/zot.yaml)) served on a
+dedicated Cilium L2 LoadBalancer at **`http://10.10.1.252:5000`**, with its
+blob store on the NAS via the `nfs-client` StorageClass.
+
+> **No TLS, no authentication.** Like Hubble UI and Kargo, this is a LAN-only
+> service - anyone on `10.10.1.0/24` can push and overwrite tags. Add htpasswd
+> auth through the chart's `mountSecret` / `secretFiles` values before exposing
+> it any wider.
+
+### Let the nodes pull from it
+
+containerd speaks HTTPS by default, so every node needs
+`/etc/rancher/k3s/registries.yaml` marking the endpoint as an HTTP mirror.
+Without it, pulls fail with `http: server gave HTTP response to HTTPS client`.
+The playbook writes the file and restarts k3s **one node at a time** (only where
+the config actually changed):
+
+```bash
+atmos ansible playbook k3s-registries -s prod     # -s edge for cluster-B
+```
+
+### Use it
+
+```bash
+# Browse the UI + search extension
+open http://10.10.1.252:5000
+
+# Push (the client also needs to treat it as insecure — Docker Desktop:
+# Settings -> Docker Engine -> "insecure-registries": ["10.10.1.252:5000"])
+docker tag myapp:1.0 10.10.1.252:5000/myapp:1.0
+docker push 10.10.1.252:5000/myapp:1.0
+
+# List repositories / tags
+curl http://10.10.1.252:5000/v2/_catalog
+```
+
+Then reference it from any workload:
+
+```yaml
+image: 10.10.1.252:5000/myapp:1.0
+```
+
+zot exports Prometheus metrics at `/metrics`; the chart's `ServiceMonitor` is
+enabled, so kube-prometheus-stack scrapes it automatically.
+
 ## Troubleshooting
 
 - **`GatewayClass`/`Gateway` stuck `Unknown`/`Pending`, or no LB IP gets
@@ -693,10 +787,13 @@ core GitOps workflow this layer is meant to teach.
 
 - **Grafana admin login fails ("invalid password" / "user not found"):** the only
   account is the built-in `admin` (not your email); anonymous **Viewer** access
-  still works for browsing. Get the password from the chart-managed secret with
-  `kubectl -n monitoring get secret monitoring-grafana -o jsonpath='{.data.admin-password}' | base64 -d`.
-  Do **not** change it in the UI - kube-prometheus-stack re-applies the secret on
-  restart and reverts it.
+  still works for browsing. The credentials come from the out-of-band
+  `grafana-admin` secret (see "Prerequisite: Grafana admin secret"). Read the
+  current value with
+  `kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d`.
+  Don't change it in the UI (no PV — a UI change is lost on pod recreation);
+  instead update the `grafana-admin` secret and
+  `kubectl -n monitoring rollout restart deploy/monitoring-grafana`.
 
 ## Teardown
 

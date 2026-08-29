@@ -1,0 +1,47 @@
+---
+# Standalone: install the NFS client on every node.
+#
+# The `common` role already installs nfs-common during a full site.yml run, but
+# that also does swap/sysctl/kernel-module work. This playbook is the narrow,
+# safe-to-rerun version for an existing cluster — e.g. before pointing a
+# StorageClass (nfs-subdir-external-provisioner) or a PV at an NFS export.
+#
+# Run:
+#   atmos ansible playbook k3s-nfs-client -s prod
+#   ansible-playbook -i inventory/hosts.yml nfs-client.yml
+#
+# Optionally verify the exports are visible from every node by passing the
+# server address:
+#   ansible-playbook -i inventory/hosts.yml nfs-client.yml -e nfs_server=10.10.1.20
+
+- name: Install the NFS client on all k3s nodes
+  hosts: k3s_cluster
+  become: true
+  tasks:
+    - name: Ensure nfs-common is present
+      ansible.builtin.apt:
+        name: nfs-common
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Stat the NFSv4 mount helper
+      ansible.builtin.stat:
+        path: /sbin/mount.nfs4
+      register: _mount_nfs4
+
+    - name: Fail if the kubelet would be unable to mount NFS volumes
+      ansible.builtin.assert:
+        that: _mount_nfs4.stat.exists
+        fail_msg: "/sbin/mount.nfs4 missing after installing nfs-common"
+
+    - name: Query exports on the NFS server
+      ansible.builtin.command: showmount -e {{ nfs_server }}
+      register: _nfs_exports
+      changed_when: false
+      when: nfs_server is defined
+
+    - name: Report visible exports
+      ansible.builtin.debug:
+        var: _nfs_exports.stdout_lines
+      when: nfs_server is defined

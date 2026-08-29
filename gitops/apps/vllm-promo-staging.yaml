@@ -10,8 +10,11 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
-    model-promotion.rykelley.com/phase: "2"
+    model-promotion.rykelley.com/phase: "4"
     model-promotion.rykelley.com/cluster: staging
+    # Phase 5+: Kargo staging Stage may update targetRevision via argocd-update.
+    kargo.akuity.io/authorized-stage: vllm-promo:staging
+    argocd.argoproj.io/sync-wave: "10"
 spec:
   project: default
   sources:

@@ -1,0 +1,87 @@
+# nfs-subdir-external-provisioner — dynamic RWX volumes backed by the NAS.
+#
+# Gives the cluster a `nfs-client` StorageClass that carves each PVC out as a
+# subdirectory of a single NFS export, so workloads get ReadWriteMany volumes
+# that survive a node loss (unlike the built-in local-path SC, which pins a PVC
+# to whichever node first scheduled it).
+#
+# PREREQUISITE: the export below must actually be exported by the NAS. On a
+# Synology, creating the shared folder is not enough — it only appears in the
+# export list once an NFS permission rule exists for it (Control Panel → Shared
+# Folder → Edit → NFS Permissions). Verify from a node with:
+#   showmount -e 10.10.1.40
+# A missing export surfaces as a kubelet FailedMount with "reason given by
+# server: No such file or directory".
+#
+# The provisioner runs as root and mkdirs a directory per PVC under the export
+# root, so the NFS rule must not squash root (Synology: "Map all users to
+# admin"), or provisioning fails on mkdir even though the mount succeeds.
+#
+# Atmos passes stack `vars` as Helmfile state values (.Values.*).
+
+repositories:
+  - name: nfs-subdir-external-provisioner
+    url: https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
+
+releases:
+  - name: nfs-provisioner
+    namespace: {{ .Values.nfs_provisioner_namespace | default "nfs-provisioning" }}
+    chart: nfs-subdir-external-provisioner/nfs-subdir-external-provisioner
+    version: {{ .Values.nfs_provisioner_chart_version | default "4.0.18" | quote }}
+    createNamespace: true
+    wait: true
+    timeout: 600
+    {{- if .Values.nfs_storage_class_default }}
+    # k3s' local-storage addon always marks local-path as default and will
+    # restore that annotation on server restart. Clear it after every sync so
+    # nfs-client is the only default. Re-apply this helmfile after a k3s
+    # upgrade if local-path becomes default again.
+    hooks:
+      - events: ["postsync"]
+        showlogs: true
+        command: kubectl
+        args:
+          - patch
+          - storageclass
+          - local-path
+          - --type=merge
+          - -p
+          - '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
+    {{- end }}
+    values:
+      - image:
+          repository: registry.k8s.io/sig-storage/nfs-subdir-external-provisioner
+          tag: {{ .Values.nfs_provisioner_image_tag | default "v4.0.2" | quote }}
+        nfs:
+          server: {{ .Values.nfs_server | quote }}
+          path: {{ .Values.nfs_path | quote }}
+          mountOptions:
+            # 4.1 matches what the Synology serves; `hard` so a NAS reboot
+            # blocks I/O and recovers instead of handing pods an I/O error.
+            - nfsvers=4.1
+            - hard
+            - noatime
+        storageClass:
+          name: {{ .Values.nfs_storage_class_name | default "nfs-client" | quote }}
+          # When true, this class is the cluster default. The postsync hook
+          # clears the same annotation on k3s' local-path so there is never
+          # more than one default (the API server would otherwise pick at
+          # random).
+          defaultClass: {{ .Values.nfs_storage_class_default | default false }}
+          accessModes: ReadWriteMany
+          reclaimPolicy: Delete
+          # false = the PVC's directory is deleted outright on release. Set
+          # true to rename it to archived-* and keep the data.
+          archiveOnDelete: {{ .Values.nfs_archive_on_delete | default false }}
+          # Human-readable layout on the NAS (<namespace>/<pvc>) instead of the
+          # default pvc-<uuid>, so the export stays browsable from DSM.
+          pathPattern: "${.PVC.namespace}/${.PVC.name}"
+        nodeSelector:
+          kubernetes.io/os: linux
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi

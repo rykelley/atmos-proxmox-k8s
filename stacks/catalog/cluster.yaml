@@ -80,6 +80,35 @@ components:
         service_cidr: "10.43.0.0/16"
         cluster_dns: "10.43.0.10"
 
+    # Same component dir as `k3s`, different playbook: installs nfs-common on
+    # every node without running the rest of the site play. Not part of
+    # deploy-cluster (the common role covers it there) — this is for adding NFS
+    # storage to a cluster that is already up.
+    k3s-nfs-client:
+      metadata:
+        component: k3s
+      settings:
+        ansible:
+          playbook: nfs-client.yml
+          inventory: inventory/hosts.yml
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: "false"
+        ANSIBLE_FORCE_COLOR: "true"
+
+    # Same component dir again: writes /etc/rancher/k3s/registries.yaml so
+    # containerd pulls from the in-cluster zot registry over plain HTTP.
+    # Restarts k3s on the nodes whose config actually changed.
+    k3s-registries:
+      metadata:
+        component: k3s
+      settings:
+        ansible:
+          playbook: registries.yml
+          inventory: inventory/hosts.yml
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: "false"
+        ANSIBLE_FORCE_COLOR: "true"
+
   helmfile:
     cilium:
       metadata:
@@ -244,6 +273,31 @@ components:
         # --- Cilium Gateway L2 LoadBalancer (Hubble UI observability) ---
         hubble_gateway_hostname: ""
         hubble_lb_ip: "10.10.1.241"
+
+    # RWX storage backed by the Synology NAS. `nfs-client` is the cluster
+    # default so PVCs without storageClassName land on the NAS (and survive a
+    # node loss). local-path stays installed for workloads that pin it
+    # explicitly; the helmfile unsets its default annotation so there is only one.
+    nfs-provisioner:
+      metadata:
+        component: nfs-provisioner
+      settings:
+        depends_on:
+          1:
+            component: cilium
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
+      vars:
+        nfs_provisioner_namespace: "nfs-provisioning"
+        nfs_provisioner_chart_version: "4.0.18"
+        nfs_provisioner_image_tag: "v4.0.2"
+        # Synology NAS. `nfs_path` must be an actual export (`showmount -e`),
+        # not just a shared folder that exists in DSM.
+        nfs_server: "10.10.1.40"
+        nfs_path: "/volume1/NFS"
+        nfs_storage_class_name: "nfs-client"
+        nfs_storage_class_default: true
+        nfs_archive_on_delete: false
 
     kyverno:
       metadata:

@@ -104,6 +104,31 @@ components:
         # managed side by side (helmfile below points KUBECONFIG here too).
         kubeconfig_local_path: '{{ env "HOME" }}/.kube/atmos-k3s-edge.yaml'
 
+    # See the prod catalog: narrow NFS-client install against cluster-B's nodes.
+    k3s-nfs-client:
+      metadata:
+        component: k3s
+      settings:
+        ansible:
+          playbook: nfs-client.yml
+          inventory: inventory/hosts-edge.yml
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: "false"
+        ANSIBLE_FORCE_COLOR: "true"
+
+    # See the prod catalog: point cluster-B's containerd at the zot registry
+    # running on cluster-A (10.10.1.252:5000, reachable across the flat LAN).
+    k3s-registries:
+      metadata:
+        component: k3s
+      settings:
+        ansible:
+          playbook: registries.yml
+          inventory: inventory/hosts-edge.yml
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: "false"
+        ANSIBLE_FORCE_COLOR: "true"
+
   helmfile:
     cilium:
       metadata:
@@ -126,3 +151,27 @@ components:
         k8s_client_qps: 15
         k8s_client_burst: 20
         gateway_api_crds_url: "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/experimental-install.yaml"
+
+    # Same NAS export and layout as cluster-A. NOTE: both clusters therefore
+    # write into /volume1/NFS under <namespace>/<pvc>, so a PVC with the same
+    # namespace AND name on both clusters (e.g. monitoring/*) resolves to one
+    # shared directory. Give cluster-B its own export or pathPattern prefix if
+    # that ever stops being acceptable.
+    nfs-provisioner:
+      metadata:
+        component: nfs-provisioner
+      settings:
+        depends_on:
+          1:
+            component: cilium
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s-edge.yaml'
+      vars:
+        nfs_provisioner_namespace: "nfs-provisioning"
+        nfs_provisioner_chart_version: "4.0.18"
+        nfs_provisioner_image_tag: "v4.0.2"
+        nfs_server: "10.10.1.40"
+        nfs_path: "/volume1/NFS"
+        nfs_storage_class_name: "nfs-client"
+        nfs_storage_class_default: true
+        nfs_archive_on_delete: false
