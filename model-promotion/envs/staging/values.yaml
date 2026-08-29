@@ -27,7 +27,13 @@ model:
 gpu:
   count: 1
 
-replicas: {{ if hasKey .Values "replicas" }}{{ .Values.replicas }}{{ else }}1{{ end }}
+# Scale the canary up (1) only while a promotion is being evaluated. The GPU is
+# a single 16GB card and this pod claims ~90% of its VRAM, so leaving it at 1
+# starves everything else (vllm, embeddings) that wants a slice.
+# NOTE: this is a plain Helm values file — Helm does not template values files,
+# so `{{ ... }}` here makes Argo CD fail to parse it and silently stop
+# reconciling the app.
+replicas: 0
 
 resources:
   requests:
