@@ -55,12 +55,18 @@
         timeout: 180
       when: _registries.changed
 
+    # k3s renders registries.yaml into a per-registry hosts.toml under certs.d
+    # (not into containerd's config.toml).
     - name: Verify containerd picked up the mirror
-      ansible.builtin.command: grep -A2 '{{ zot_endpoint }}' /var/lib/rancher/k3s/agent/etc/containerd/config.toml
+      ansible.builtin.slurp:
+        src: "/var/lib/rancher/k3s/agent/etc/containerd/certs.d/{{ zot_endpoint }}/hosts.toml"
       register: _containerd_mirror
-      changed_when: false
-      failed_when: false
+
+    - name: Fail if the HTTP endpoint is not registered
+      ansible.builtin.assert:
+        that: "'http://' ~ zot_endpoint in (_containerd_mirror.content | b64decode)"
+        fail_msg: "hosts.toml for {{ zot_endpoint }} has no http:// host - pulls will fail on TLS"
 
     - name: Report the rendered mirror config
       ansible.builtin.debug:
-        var: _containerd_mirror.stdout_lines
+        var: (_containerd_mirror.content | b64decode).split('\n')
