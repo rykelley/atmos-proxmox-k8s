@@ -31,6 +31,23 @@ releases:
     createNamespace: true
     wait: true
     timeout: 600
+    {{- if .Values.nfs_storage_class_default }}
+    # k3s' local-storage addon always marks local-path as default and will
+    # restore that annotation on server restart. Clear it after every sync so
+    # nfs-client is the only default. Re-apply this helmfile after a k3s
+    # upgrade if local-path becomes default again.
+    hooks:
+      - events: ["postsync"]
+        showlogs: true
+        command: kubectl
+        args:
+          - patch
+          - storageclass
+          - local-path
+          - --type=merge
+          - -p
+          - '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
+    {{- end }}
     values:
       - image:
           repository: registry.k8s.io/sig-storage/nfs-subdir-external-provisioner
@@ -46,10 +63,10 @@ releases:
             - noatime
         storageClass:
           name: {{ .Values.nfs_storage_class_name | default "nfs-client" | quote }}
-          # Only one StorageClass in the cluster may carry the default
-          # annotation. k3s ships local-path as default, so leaving this true
-          # creates two defaults and makes PVC binding depend on which class
-          # the API server happens to pick.
+          # When true, this class is the cluster default. The postsync hook
+          # clears the same annotation on k3s' local-path so there is never
+          # more than one default (the API server would otherwise pick at
+          # random).
           defaultClass: {{ .Values.nfs_storage_class_default | default false }}
           accessModes: ReadWriteMany
           reclaimPolicy: Delete

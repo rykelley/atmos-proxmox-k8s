@@ -5,9 +5,14 @@
 #
 # IP map on 10.10.1.0/24: .240 filament, .241 hubble, .242 vLLM, .243 open-webui,
 # .244 argocd, .245 grafana, .246 vllm-pipeline-prod (cluster-B), .247 kargo,
-# .248 cilium-ingress (shared classic-Ingress entrypoint).
+# .248 cilium-ingress (shared classic-Ingress entrypoint), .252 zot registry.
 # (.246/.247 are defined outside this file: the vllm-pipeline chart and
 # kargo/kargo-gateway.yaml respectively.)
+#
+# NOT AVAILABLE: .249/.250 are real LAN devices (DHCP), and .251 is the
+# cluster-B Prometheus VIP (model-promotion/monitoring/prod-prometheus-lb-pool.yaml).
+# Assigning a pool an address that already answers ARP breaks it silently —
+# ping-check any new IP before adding it here.
 ---
 apiVersion: cilium.io/v2alpha1
 kind: CiliumLoadBalancerIPPool
@@ -56,6 +61,33 @@ spec:
   serviceSelector:
     matchLabels:
       app.kubernetes.io/name: grafana
+  interfaces:
+    # See open-webui above: match eth0 (VMs) or eno1 (bare-metal GPU node).
+    - "^(eth0|eno1)$"
+  loadBalancerIPs: true
+---
+# zot container registry (gitops/apps/zot.yaml). Docker/containerd clients and
+# the kubelet reach it at 10.10.1.252:5000.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: zot-lb-pool
+spec:
+  blocks:
+    - start: "10.10.1.252"
+      stop: "10.10.1.252"
+  serviceSelector:
+    matchLabels:
+      app.kubernetes.io/name: zot
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: zot-lb-pool
+spec:
+  serviceSelector:
+    matchLabels:
+      app.kubernetes.io/name: zot
   interfaces:
     # See open-webui above: match eth0 (VMs) or eno1 (bare-metal GPU node).
     - "^(eth0|eno1)$"

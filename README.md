@@ -88,8 +88,8 @@ apps/
   vllm/                           # vLLM Helm chart (Deployment + LB Service + Cilium LB pool)
 gitops/                           # Argo CD app-of-apps (RAG platform + monitoring + logging)
   root-app.yaml                   # app-of-apps root Application
-  apps/                           # child Applications (monitoring, monitoring-dashboards, loki, alloy, qdrant, embeddings, open-webui, networking, cluster-tools)
-  networking/                     # Cilium LB pools for open-webui + grafana (L2-announced on eth0|eno1)
+  apps/                           # child Applications (monitoring, monitoring-dashboards, loki, alloy, qdrant, embeddings, open-webui, networking, cluster-tools, zot)
+  networking/                     # Cilium LB pools for open-webui + grafana + zot (L2-announced on eth0|eno1)
   embeddings/                     # GPU embeddings server (vLLM embed mode) manifests
   monitoring-dashboards/          # custom Grafana dashboards as sidecar ConfigMaps (GPU + vLLM Overview)
   cluster-tools/                  # read-only OpenAPI tool server ("chat with your cluster")
@@ -143,6 +143,18 @@ atmos ansible playbook k3s-nfs-client -s prod     # -s edge for cluster-B
 
 # Optionally confirm every node can see the exports:
 atmos ansible playbook k3s-nfs-client -s prod -- -e nfs_server=10.10.1.20
+```
+
+The `nfs-provisioner` component turns that export into the **`nfs-client`
+StorageClass**, which is the **cluster default** - a PVC with no
+`storageClassName` lands on the NAS (RWX, survives losing a node). k3s'
+`local-path` is still installed for workloads that name it explicitly, but its
+default annotation is cleared by a postsync hook. k3s re-adds that annotation
+on server restart or upgrade, so re-apply if `kubectl get sc` ever shows two
+defaults:
+
+```bash
+atmos helmfile apply nfs-provisioner -s prod -- --skip-diff-on-install
 ```
 
 ## Configuration
@@ -638,6 +650,55 @@ Change a workload by editing its file under [gitops/apps/](gitops/apps/) (e.g.
 bump a chart version or tweak Open WebUI env), commit, and push to `main`. Argo
 CD detects the change and syncs it - no `helmfile`/`kubectl` needed. This is the
 core GitOps workflow this layer is meant to teach.
+
+## Container registry (zot)
+
+[zot](https://zotregistry.dev/) is an OCI-native registry that gives the cluster
+somewhere to push its own images without going out to GHCR. It is another Argo
+CD Application ([gitops/apps/zot.yaml](gitops/apps/zot.yaml)) served on a
+dedicated Cilium L2 LoadBalancer at **`http://10.10.1.252:5000`**, with its
+blob store on the NAS via the `nfs-client` StorageClass.
+
+> **No TLS, no authentication.** Like Hubble UI and Kargo, this is a LAN-only
+> service - anyone on `10.10.1.0/24` can push and overwrite tags. Add htpasswd
+> auth through the chart's `mountSecret` / `secretFiles` values before exposing
+> it any wider.
+
+### Let the nodes pull from it
+
+containerd speaks HTTPS by default, so every node needs
+`/etc/rancher/k3s/registries.yaml` marking the endpoint as an HTTP mirror.
+Without it, pulls fail with `http: server gave HTTP response to HTTPS client`.
+The playbook writes the file and restarts k3s **one node at a time** (only where
+the config actually changed):
+
+```bash
+atmos ansible playbook k3s-registries -s prod     # -s edge for cluster-B
+```
+
+### Use it
+
+```bash
+# Browse the UI + search extension
+open http://10.10.1.252:5000
+
+# Push (the client also needs to treat it as insecure — Docker Desktop:
+# Settings -> Docker Engine -> "insecure-registries": ["10.10.1.252:5000"])
+docker tag myapp:1.0 10.10.1.252:5000/myapp:1.0
+docker push 10.10.1.252:5000/myapp:1.0
+
+# List repositories / tags
+curl http://10.10.1.252:5000/v2/_catalog
+```
+
+Then reference it from any workload:
+
+```yaml
+image: 10.10.1.252:5000/myapp:1.0
+```
+
+zot exports Prometheus metrics at `/metrics`; the chart's `ServiceMonitor` is
+enabled, so kube-prometheus-stack scrapes it automatically.
 
 ## Troubleshooting
 

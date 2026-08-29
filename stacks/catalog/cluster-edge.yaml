@@ -116,6 +116,19 @@ components:
         ANSIBLE_HOST_KEY_CHECKING: "false"
         ANSIBLE_FORCE_COLOR: "true"
 
+    # See the prod catalog: point cluster-B's containerd at the zot registry
+    # running on cluster-A (10.10.1.252:5000, reachable across the flat LAN).
+    k3s-registries:
+      metadata:
+        component: k3s
+      settings:
+        ansible:
+          playbook: registries.yml
+          inventory: inventory/hosts-edge.yml
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: "false"
+        ANSIBLE_FORCE_COLOR: "true"
+
   helmfile:
     cilium:
       metadata:
@@ -160,5 +173,5 @@ components:
         nfs_server: "10.10.1.40"
         nfs_path: "/volume1/NFS"
         nfs_storage_class_name: "nfs-client"
-        nfs_storage_class_default: false
+        nfs_storage_class_default: true
         nfs_archive_on_delete: false

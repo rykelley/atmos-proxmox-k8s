@@ -20,7 +20,7 @@ spec:
           type: ClusterIP
         persistence:
           size: 10Gi
-          # Uses the default k3s local-path StorageClass when unset.
+          # Uses the cluster default StorageClass when unset (nfs-client).
   destination:
     server: https://kubernetes.default.svc
     namespace: rag

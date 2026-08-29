@@ -1,0 +1,66 @@
+---
+# Standalone: point every node's containerd at the in-cluster zot registry.
+#
+# zot (gitops/apps/zot.yaml) is served over PLAIN HTTP on 10.10.1.252:5000.
+# containerd defaults to HTTPS, so without this file every pull from that
+# endpoint fails with `http: server gave HTTP response to HTTPS client`.
+# k3s renders /etc/rancher/k3s/registries.yaml into its containerd config on
+# start, so the service must be restarted after the file changes.
+#
+# Run:
+#   atmos ansible playbook k3s-registries -s prod
+#   ansible-playbook -i inventory/hosts.yml registries.yml
+#
+# Override the endpoint if the registry moves:
+#   ansible-playbook -i inventory/hosts.yml registries.yml -e zot_endpoint=10.10.1.252:5000
+
+- name: Configure the zot registry mirror on all k3s nodes
+  hosts: k3s_cluster
+  become: true
+  # One node at a time: a changed config restarts k3s, and restarting all three
+  # servers at once would take the control plane down.
+  serial: 1
+  vars:
+    zot_endpoint: "10.10.1.252:5000"
+  tasks:
+    - name: Ensure /etc/rancher/k3s exists
+      ansible.builtin.file:
+        path: /etc/rancher/k3s
+        state: directory
+        mode: "0755"
+
+    - name: Render registries.yaml
+      ansible.builtin.copy:
+        dest: /etc/rancher/k3s/registries.yaml
+        mode: "0600"
+        content: |
+          # Managed by Ansible (components/ansible/k3s/registries.yml).
+          mirrors:
+            "{{ zot_endpoint }}":
+              endpoint:
+                - "http://{{ zot_endpoint }}"
+      register: _registries
+
+    # k3s only re-reads registries.yaml at startup. Servers run `k3s`, agents
+    # run `k3s-agent`; restarting is disruptive, so only do it on change.
+    - name: Restart k3s to pick up the registry config
+      ansible.builtin.systemd:
+        name: "{{ 'k3s' if inventory_hostname in groups['k3s_servers'] else 'k3s-agent' }}"
+        state: restarted
+      when: _registries.changed
+
+    - name: Wait for the node's kubelet port to come back
+      ansible.builtin.wait_for:
+        port: 10250
+        timeout: 180
+      when: _registries.changed
+
+    - name: Verify containerd picked up the mirror
+      ansible.builtin.command: grep -A2 '{{ zot_endpoint }}' /var/lib/rancher/k3s/agent/etc/containerd/config.toml
+      register: _containerd_mirror
+      changed_when: false
+      failed_when: false
+
+    - name: Report the rendered mirror config
+      ansible.builtin.debug:
+        var: _containerd_mirror.stdout_lines

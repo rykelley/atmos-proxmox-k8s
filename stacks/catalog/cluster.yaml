@@ -95,6 +95,20 @@ components:
         ANSIBLE_HOST_KEY_CHECKING: "false"
         ANSIBLE_FORCE_COLOR: "true"
 
+    # Same component dir again: writes /etc/rancher/k3s/registries.yaml so
+    # containerd pulls from the in-cluster zot registry over plain HTTP.
+    # Restarts k3s on the nodes whose config actually changed.
+    k3s-registries:
+      metadata:
+        component: k3s
+      settings:
+        ansible:
+          playbook: registries.yml
+          inventory: inventory/hosts.yml
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: "false"
+        ANSIBLE_FORCE_COLOR: "true"
+
   helmfile:
     cilium:
       metadata:
@@ -260,9 +274,10 @@ components:
         hubble_gateway_hostname: ""
         hubble_lb_ip: "10.10.1.241"
 
-    # RWX storage backed by the Synology NAS. The `nfs-client` StorageClass it
-    # creates is what stateful workloads should use when they need a volume that
-    # is not pinned to a single node (local-path is).
+    # RWX storage backed by the Synology NAS. `nfs-client` is the cluster
+    # default so PVCs without storageClassName land on the NAS (and survive a
+    # node loss). local-path stays installed for workloads that pin it
+    # explicitly; the helmfile unsets its default annotation so there is only one.
     nfs-provisioner:
       metadata:
         component: nfs-provisioner
@@ -281,10 +296,7 @@ components:
         nfs_server: "10.10.1.40"
         nfs_path: "/volume1/NFS"
         nfs_storage_class_name: "nfs-client"
-        # k3s already ships local-path as the default StorageClass; opt into
-        # nfs-client per-PVC via storageClassName rather than making the
-        # cluster have two defaults.
-        nfs_storage_class_default: false
+        nfs_storage_class_default: true
         nfs_archive_on_delete: false
 
     kyverno:
