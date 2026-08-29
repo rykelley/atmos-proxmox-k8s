@@ -9,7 +9,7 @@ image:
   digest: ""
   pullPolicy: IfNotPresent
 
-replicas: 1
+replicas: 0
 
 model:
   # HuggingFace model id (overridden per env).
