@@ -1,3 +1,31 @@
+This cluster
+============
+
+One process per GPU. Do not co-schedule anything else on these cards.
+
+| Side | Cluster | Node | GPU sharing | LAN URL | Model |
+| --- | --- | --- | --- | --- | --- |
+| Ollama | homelab-2 | k3s-gpu2 (**10.10.1.39**) | none (1/1) | NodePort on `10.10.1.39` (`make` looks it up) | `qwen2.5:3b-instruct-fp16` |
+| vLLM | homelab-1 | k3s-gpu1 (10.10.1.37) | time-sliced 4-way, but every other GPU pod is replicas=0 | NodePort on `10.10.1.37` (`make` looks it up; `.242` is a UniFi switch) | `Qwen/Qwen2.5-3B-Instruct` |
+
+Same family, same size, FP16/BF16 on both. Default Ollama `qwen2.5:3b` is Q4_K_M — that would not be a fair sweep.
+
+```bash
+cd ollama-lb-test
+make deploy-ollama    # helm install on homelab-2; pulls the 6.2 GiB model
+make deploy-vllm      # scale Helmfile vLLM to 1, util 0.90, exclusive card
+make status
+make smoke            # /v1/models + one short completion each
+make sweep-ollama     # writes sweep_ollama.csv  (run first or second; sequential)
+make sweep-vllm       # writes sweep_vllm.csv
+```
+
+Pinned versions: Ollama image `0.33.2` (`sha256:020e4134285e2ef4d8fd801234176de3b4faadc992a3eb06c8e66a2f9d4c4ba2`), vLLM `vllm/vllm-openai:v0.11.0` (already on homelab-1). Ollama knobs in `apps/ollama/chart/values.yaml`: `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_QUEUE=512`, `OLLAMA_KEEP_ALIVE=-1`, `OLLAMA_CONTEXT_LENGTH=8192` (matches vLLM `--max-model-len`).
+
+**LAN note:** `10.10.1.242` answers ARP as `usw-flex-2` (UniFi switch), so the Cilium vLLM VIP on that address is dead. The sweep hits k3s-gpu1's NodePort instead. **Disk note:** k3s-gpu1 sat at DiskPressure while pulling the 12 GB vLLM image (idle `vllm-promo` cache is ~15 GiB on that node). After the pull it is ~94% full / ~6 GiB free — another eviction is likely if logs or images grow.
+
+---
+
 Why it breaks — the actual mechanism
 
 Three things stack up:

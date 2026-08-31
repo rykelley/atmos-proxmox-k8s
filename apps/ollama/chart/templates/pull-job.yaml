@@ -1,0 +1,39 @@
+# Pull the sweep model into the running server (no GPU needed on this Job —
+# it talks to ollama.ollama:11434). Helm --wait applies the Deployment first,
+# then this post-install hook; backoff covers the remaining startup race.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ollama-pull
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ollama.labels" (dict "name" "ollama-pull" "component" "inference" "root" $) | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "1"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 8
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "ollama.labels" (dict "name" "ollama-pull" "component" "inference" "root" $) | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      enableServiceLinks: false
+      containers:
+        - name: pull
+          image: {{ include "ollama.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["ollama", "pull", {{ .Values.model.name | quote }}]
+          env:
+            - name: OLLAMA_HOST
+              value: "http://ollama.{{ .Values.namespace }}.svc:{{ .Values.service.port }}"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi

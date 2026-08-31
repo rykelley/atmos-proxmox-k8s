@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ollama.labels" (dict "name" "ollama" "component" "inference" "root" $) | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  # One GPU — never run two pods during a rolling update.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ollama.selectorLabels" (dict "name" "ollama") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ollama.labels" (dict "name" "ollama" "component" "inference" "root" $) | nindent 8 }}
+    spec:
+      runtimeClassName: {{ .Values.gpu.runtimeClassName }}
+      # Kubernetes injects OLLAMA_PORT=tcp://... for a Service named ollama,
+      # which Ollama can misread as its listen address. Same class of bug as
+      # VLLM_PORT on the vLLM chart.
+      enableServiceLinks: false
+      {{- with .Values.gpu.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gpu.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ollama
+          image: {{ include "ollama.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: OLLAMA_HOST
+              value: {{ .Values.ollama.host | quote }}
+            - name: OLLAMA_NUM_PARALLEL
+              value: {{ .Values.ollama.numParallel | quote }}
+            - name: OLLAMA_MAX_QUEUE
+              value: {{ .Values.ollama.maxQueue | quote }}
+            - name: OLLAMA_KEEP_ALIVE
+              value: {{ .Values.ollama.keepAlive | quote }}
+            - name: OLLAMA_CONTEXT_LENGTH
+              value: {{ .Values.ollama.contextLength | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          resources:
+            requests:
+              cpu: {{ .Values.resources.requests.cpu | quote }}
+              memory: {{ .Values.resources.requests.memory | quote }}
+              nvidia.com/gpu: {{ .Values.gpu.count }}
+            limits:
+              cpu: {{ .Values.resources.limits.cpu | quote }}
+              memory: {{ .Values.resources.limits.memory | quote }}
+              nvidia.com/gpu: {{ .Values.gpu.count }}
+          startupProbe:
+            httpGet:
+              path: /api/tags
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /api/tags
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/tags
+              port: http
+            periodSeconds: 20
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ollama-models
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ollama.labels" (dict "name" "ollama" "component" "inference" "root" $) | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.modelCache.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.modelCache.size | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ollama.labels" (dict "name" "ollama" "component" "inference" "root" $) | nindent 4 }}
+  annotations:
+    io.cilium/lb-ipam-ips: {{ .Values.loadBalancer.ip | quote }}
+spec:
+  type: LoadBalancer
+  selector:
+    {{- include "ollama.selectorLabels" (dict "name" "ollama") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
