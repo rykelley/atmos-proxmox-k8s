@@ -6,7 +6,7 @@ One process per GPU. Do not co-schedule anything else on these cards.
 | Side | Cluster | Node | GPU sharing | LAN URL | Model |
 | --- | --- | --- | --- | --- | --- |
 | Ollama | homelab-2 | k3s-gpu2 (**10.10.1.39**) | none (1/1) | NodePort on `10.10.1.39` (`make` looks it up) | `qwen2.5:3b-instruct-fp16` |
-| vLLM | homelab-1 | k3s-gpu1 (10.10.1.37) | time-sliced 4-way, but every other GPU pod is replicas=0 | NodePort on `10.10.1.37` (`make` looks it up; `.242` is a UniFi switch) | `Qwen/Qwen2.5-3B-Instruct` |
+| vLLM | homelab-1 | k3s-gpu1 (10.10.1.37) | none (1/1) | NodePort on `10.10.1.37` (`make` looks it up; `.242` is a UniFi switch) | `Qwen/Qwen2.5-3B-Instruct` |
 
 Same family, same size, FP16/BF16 on both. Default Ollama `qwen2.5:3b` is Q4_K_M — that would not be a fair sweep.
 
