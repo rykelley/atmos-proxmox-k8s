@@ -1,0 +1,65 @@
+# Ollama on homelab-2 / k3s-gpu2 (RTX PRO 2000 Blackwell 16GB, no time-slicing).
+# Pair with the Helmfile vLLM on homelab-1 / k3s-gpu1 so each card runs one server.
+namespace: ollama
+
+image:
+  repository: ollama/ollama
+  tag: "0.33.2"
+  # Manifest-list digest resolved 2026-08-30 (same as :latest that day).
+  digest: "sha256:020e4134285e2ef4d8fd801234176de3b4faadc992a3eb06c8e66a2f9d4c4ba2"
+  pullPolicy: IfNotPresent
+
+replicas: 1
+
+# Same family/size as the Helmfile vLLM (Qwen/Qwen2.5-3B-Instruct, BF16).
+# Default ollama `qwen2.5:3b` is Q4_K_M — that would not be a fair sweep.
+model:
+  name: "qwen2.5:3b-instruct-fp16"
+
+# --- Ollama knobs (each one is a measured variable in the sweep README) ---
+ollama:
+  # Listen on all interfaces so the Cilium LB can reach it.
+  host: "0.0.0.0:11434"
+  # 1 slot = the money-shot. Raise to 4/8 only for Test 4 (VRAM trap).
+  numParallel: "1"
+  # Default 512. Drop to 32 only for Test 3 (503 cliff).
+  maxQueue: "512"
+  # Never idle-unload during the sweep (Test 5 otherwise eats a cold reload).
+  keepAlive: "-1"
+  # Match vLLM --max-model-len 8192 so KV growth is comparable.
+  contextLength: "8192"
+
+gpu:
+  count: 1
+  runtimeClassName: nvidia
+  nodeSelector:
+    nvidia.com/gpu.present: "true"
+  # k3s-gpu2 currently has NO taint; keep the same toleration as vLLM so this
+  # still schedules if the node is tainted later.
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+resources:
+  requests:
+    cpu: "4"
+    memory: 12Gi
+  limits:
+    cpu: "8"
+    memory: 24Gi
+
+# Models live on the GPU node's disk (WaitForFirstConsumer). 3B FP16 is 6.2 GiB.
+modelCache:
+  size: "40Gi"
+  storageClassName: local-path
+
+service:
+  port: 11434
+
+loadBalancer:
+  poolName: ollama-lb-pool
+  # Ping-checked free on 2026-08-30 (.249/.250 are live DHCP, .251 is prod Prom).
+  ip: "10.10.1.253"
+  # Same regex as prod Prometheus: VMs=eth0, GPU box may be eno1 or eno4.
+  interface: "(eth0|eno1|eno4)"

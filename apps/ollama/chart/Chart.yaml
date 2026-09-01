@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ollama
+description: Ollama on the exclusive GPU (homelab-2 / k3s-gpu2) for the vLLM vs Ollama load sweep.
+type: application
+version: 0.1.0
+appVersion: "0.33.2"
