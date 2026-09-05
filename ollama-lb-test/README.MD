@@ -22,8 +22,6 @@ make sweep-vllm       # writes sweep_vllm.csv
 
 Pinned versions: Ollama image `0.33.2` (`sha256:020e4134285e2ef4d8fd801234176de3b4faadc992a3eb06c8e66a2f9d4c4ba2`), vLLM `vllm/vllm-openai:v0.11.0` (already on homelab-1). Ollama knobs in `apps/ollama/chart/values.yaml`: `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_QUEUE=512`, `OLLAMA_KEEP_ALIVE=-1`, `OLLAMA_CONTEXT_LENGTH=8192` (matches vLLM `--max-model-len`).
 
-**LAN note:** `10.10.1.242` answers ARP as `usw-flex-2` (UniFi switch), so the Cilium vLLM VIP on that address is dead. The sweep hits k3s-gpu1's NodePort instead. **Disk note:** k3s-gpu1 sat at DiskPressure while pulling the 12 GB vLLM image (idle `vllm-promo` cache is ~15 GiB on that node). After the pull it is ~94% full / ~6 GiB free — another eviction is likely if logs or images grow.
-
 ---
 
 Why it breaks — the actual mechanism
