@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://atmos.tools/schemas/atmos/atmos-manifest/1.0/atmos-manifest.json
 #
 # Single source of truth for cluster-B ("edge") — the second, CPU-only k3s
-# cluster that serves as the PROD promotion target in the Kargo pipeline.
+# cluster (aside from its own bare-metal GPU node running vLLM).
 # Imported by stacks/deploy/edge/cluster.yaml (addressed as `-s edge`).
 #
 # Cluster-B lives on a STANDALONE Proxmox host (pve2, API at 10.10.1.82) with its
@@ -9,10 +9,10 @@
 # 10.10.1.0/24 LAN. Its VIP (.50) and node IPs (.51-.53) are deliberately clear
 # of cluster-A's VIP (.30), nodes (.31-.37), and LB IPs (.240-.245).
 #
-# Only the components needed to stand up a reconcile target live here:
-# proxmox-vms (VMs), k3s (HA control plane), and cilium (CNI + L2 LoadBalancer).
-# Argo Rollouts, the promoted vLLM, etc. arrive via the hub's Argo CD in later
-# phases; cluster-B does NOT run its own Argo CD.
+# Each cluster is deployed independently with plain atmos + ansible + helmfile
+# (no Argo CD / Kargo). The components here — proxmox-vms (VMs), k3s (HA control
+# plane), cilium (CNI + L2 LoadBalancer), nfs-provisioner, and vllm — are applied
+# with `atmos helmfile apply <component> -s edge`.
 
 components:
   terraform:
@@ -175,3 +175,73 @@ components:
         nfs_storage_class_name: "nfs-client"
         nfs_storage_class_default: true
         nfs_archive_on_delete: false
+
+    # GPU inference on k3s-gpu2 (10.10.1.39). Same chart/model as cluster-A
+    # vLLM so both exclusive Blackwells are interchangeable OpenAI backends.
+    # LAN VIP 10.10.1.253 (was the Ollama experiment). Do not use .242 — that
+    # ARP is a UniFi switch, not cluster-A's Cilium pool.
+    vllm:
+      metadata:
+        component: vllm
+      settings:
+        depends_on:
+          1:
+            component: cilium
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s-edge.yaml'
+      vars:
+        vllm_namespace: "vllm"
+        vllm_image_tag: "v0.11.0"
+        vllm_model: "Qwen/Qwen2.5-3B-Instruct"
+        vllm_max_model_len: 8192
+        vllm_gpu_memory_utilization: "0.90"
+        vllm_extra_args:
+          - "--enable-auto-tool-choice"
+          - "--tool-call-parser"
+          - "hermes"
+        vllm_lb_ip: "10.10.1.253"
+        vllm_lb_interface: "(eth0|eno1|eno4)"
+        vllm_model_cache_size: "30Gi"
+        vllm_model_cache_storage_class: "local-path"
+        vllm_hf_token_secret: ""
+
+    # Edge slice of the monitoring stack: a Prometheus-ONLY kube-prometheus-stack
+    # (Grafana/Loki/Alloy disabled) that scrapes this cluster's nodes, kube-state,
+    # DCGM (GPU), and vLLM, then exposes itself on LAN LB 10.10.1.251. The hub
+    # (homelab-1) Grafana adds it as the Prometheus-edge datasource, so a single
+    # Grafana covers both clusters. Same `monitoring` component as the hub, just
+    # reshaped by the vars below. Applied with `atmos helmfile apply monitoring -s edge`.
+    monitoring:
+      metadata:
+        component: monitoring
+      settings:
+        depends_on:
+          # cilium provides the L2 LoadBalancer pool for the .251 VIP. The GPU
+          # Operator's DCGM exporter (namespace gpu-operator) is already running.
+          1:
+            component: cilium
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s-edge.yaml'
+      vars:
+        monitoring_namespace: "monitoring"
+        monitoring_chart_version: "87.17.0"
+        # Prometheus-only shape: select the edge values, disable the hub-only
+        # releases (Grafana/Loki/Alloy) and dashboards.
+        monitoring_kps_values: "values/kube-prometheus-stack-edge.yaml"
+        monitoring_loki_enabled: false
+        monitoring_alloy_enabled: false
+        monitoring_dashboards_enabled: false
+        # DCGM + vLLM ServiceMonitors are defined in the edge kps values, so keep
+        # the extras chart's redundant DCGM copy off.
+        monitoring_dcgm_enabled: false
+        monitoring_dcgm_namespace: "gpu-operator"
+        # monitoring-extras runs here ONLY to create the Prometheus LB pool; no
+        # Grafana pool and no cilium-ingress pool on the edge.
+        monitoring_extras_enabled: true
+        monitoring_grafana_lb_enabled: false
+        monitoring_cilium_ingress_enabled: false
+        monitoring_prometheus_lb_enabled: true
+        monitoring_prometheus_lb_ip: "10.10.1.251"
+        # L2-announce NIC regex: edge VMs use eth0, the edge GPU node (k3s-gpu2)
+        # announces on eno4.
+        monitoring_lb_interface: "^(eth0|eno1|eno4)$"

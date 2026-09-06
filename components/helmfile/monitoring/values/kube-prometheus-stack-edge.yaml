@@ -1,0 +1,74 @@
+# homelab-2 (edge) — kube-prometheus-stack values.
+# Chart: prometheus-community/kube-prometheus-stack 87.17.0 (same pin as the hub).
+# Consumed by components/helmfile/monitoring/helmfile.yaml.gotmpl when applied with
+# `atmos helmfile apply monitoring -s edge` (monitoring_kps_values selects this file).
+#
+# EDGE IS PROMETHEUS-ONLY. Grafana/Loki/Alloy are disabled here — the hub Grafana
+# (homelab-1) is the single UI for both clusters and queries this Prometheus over
+# the LAN via the Prometheus-edge datasource (http://10.10.1.251:9090). The LB IP
+# .251 is claimed by the prometheus-edge-lb-pool from the monitoring-extras chart.
+
+# Grafana lives on the hub only.
+grafana:
+  enabled: false
+
+# Alertmanager stays chart-default (ClusterIP), not exposed. Keep it so the edge
+# Prometheus has a valid alerting target and the operator doesn't complain.
+alertmanager:
+  enabled: true
+
+prometheus:
+  service:
+    type: LoadBalancer
+    annotations:
+      # Claimed by prometheus-edge-lb-pool (monitoring-extras chart, edge only).
+      io.cilium/lb-ipam-ips: "10.10.1.251"
+  ingress:
+    enabled: false
+  prometheusSpec:
+    retention: 7d
+    # Watch ServiceMonitors/PodMonitors in every namespace, not just those
+    # carrying this release's Helm label.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    # Tag every series from this cluster so the hub Grafana can tell the two
+    # Prometheis apart (the hub sets cluster=hub).
+    externalLabels:
+      cluster: edge
+    # How Grafana on the hub addresses this Prometheus (used in generated links).
+    externalUrl: http://10.10.1.251:9090
+    # Edge keeps its own TSDB on local-path (unlike the hub, which is ephemeral
+    # for now). 20Gi is plenty for 7d at this scrape volume.
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
+
+  # Edge scrape targets: the GPU Operator's DCGM exporter and the vLLM server.
+  additionalServiceMonitors:
+    - name: dcgm-exporter
+      namespaceSelector:
+        matchNames:
+          - gpu-operator
+      selector:
+        matchLabels:
+          app: nvidia-dcgm-exporter
+      endpoints:
+        - port: gpu-metrics
+          interval: 15s
+    # vLLM exposes Prometheus metrics on its main HTTP port at /metrics.
+    - name: vllm
+      namespaceSelector:
+        matchNames:
+          - vllm
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: vllm
+      endpoints:
+        - port: http
+          path: /metrics
+          interval: 15s

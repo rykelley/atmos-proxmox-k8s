@@ -1,0 +1,37 @@
+# monitoring-extras — see Chart.yaml. All resources land in the release namespace
+# (monitoring) set by helmfile.
+
+# Grafana dashboards: every *.json under chart/dashboards/ is wrapped in a
+# ConfigMap labeled grafana_dashboard=1 and auto-imported by the
+# kube-prometheus-stack Grafana sidecar (NAMESPACE=ALL). Drop a JSON file in
+# that dir to add a dashboard — no template edits needed.
+dashboards:
+  enabled: true
+
+# DCGM exporter scrape (GPU Operator installs the exporter in namespace
+# gpu-operator with label app=nvidia-dcgm-exporter). Redundant with the
+# additionalServiceMonitors entry in the kube-prometheus-stack values, but
+# harmless (same target) and useful if that values path is ever trimmed.
+dcgm:
+  enabled: true
+  exporterNamespace: gpu-operator
+  interval: 15s
+
+# Cilium L2 LoadBalancer pools. Match the LAN NIC on whichever node Cilium
+# elects as announcer: Proxmox VMs use eth0, the bare-metal GPU node uses eno1.
+loadBalancer:
+  interface: "^(eth0|eno1)$"
+  grafana:
+    enabled: true
+    ip: "10.10.1.245"
+  # Shared classic-Ingress entrypoint (kube-system/cilium-ingress). Keep in sync
+  # with cilium's ingress_lb_ip in stacks/catalog/cluster.yaml.
+  ciliumIngress:
+    enabled: true
+    ip: "10.10.1.248"
+  # Edge (homelab-2) only: stable LAN VIP for the edge Prometheus so the hub
+  # Grafana can reach it as the Prometheus-edge datasource. Disabled by default;
+  # the edge stack sets monitoring_prometheus_lb_enabled=true.
+  prometheus:
+    enabled: false
+    ip: "10.10.1.251"

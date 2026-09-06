@@ -1,34 +1,57 @@
-# Argo CD
+# Monitoring (Prometheus + Grafana + Loki)
 
-Deployed release:
-
-```
-NAME     NAMESPACE  REVISION  UPDATED                              STATUS    CHART           APP VERSION
-argocd   argocd     1         2026-07-18 20:58:55.79846 -0500 CDT  deployed  argo-cd-10.1.4  v3.4.5
-```
-
-## Accessing the Server UI
-
-In order to access the server UI you have the following options:
-
-1. Port-forward the Argo CD server service:
-
-   ```bash
-   kubectl port-forward service/argocd-server -n argocd 8080:443
-   ```
-
-   Then open your browser at [http://localhost:8080](http://localhost:8080) and accept the certificate.
-
-2. Enable ingress in the values file (`server.ingress.enabled`) and either:
-   - Add the annotation for SSL passthrough: <https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/#option-1-ssl-passthrough>
-   - Set `configs.params."server.insecure"` in the values file and terminate SSL at your ingress: <https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/#option-2-multiple-ingress-objects-and-hosts>
-
-## Logging In
-
-After reaching the UI the first time you can login with username `admin` and the random password generated during the installation. You can find the password by running:
+Deployed by the `monitoring` helmfile component (see
+[components/helmfile/monitoring/helmfile.yaml.gotmpl](../components/helmfile/monitoring/helmfile.yaml.gotmpl)):
+kube-prometheus-stack + Loki + Grafana Alloy + the local `monitoring-extras`
+chart.
 
 ```bash
-kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+atmos helmfile apply monitoring -s prod
+kubectl -n monitoring get pods
 ```
 
-You should delete the initial secret afterwards as suggested by the [Getting Started Guide](https://argo-cd.readthedocs.io/en/stable/getting_started/#4-login-using-the-cli).
+## Accessing Grafana
+
+Grafana is exposed on a dedicated Cilium L2 LoadBalancer VIP:
+
+- Browse to **http://10.10.1.245** and log in as `admin`.
+- Anonymous **Viewer** access is enabled, so dashboards are browsable without a
+  login.
+
+The admin credentials come from the out-of-band `grafana-admin` Secret (not in
+Git). Read the current password with:
+
+```bash
+kubectl -n monitoring get secret grafana-admin \
+  -o jsonpath='{.data.admin-password}' | base64 -d; echo
+```
+
+Don't change the password in the UI (Grafana has no PV, so a UI change is lost
+on pod recreation). Instead update the Secret and restart Grafana:
+
+```bash
+kubectl -n monitoring create secret generic grafana-admin \
+  --from-literal=admin-user=admin \
+  --from-literal=admin-password='<new-password>' \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n monitoring rollout restart deploy/monitoring-grafana
+```
+
+## Accessing Prometheus
+
+Prometheus is reached through the shared cilium-ingress entrypoint
+(`10.10.1.248`). Point DNS `prometheus-staging.rykelley.com -> 10.10.1.248`, or
+port-forward for a quick look:
+
+```bash
+kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090
+# then open http://localhost:9090
+```
+
+## Dashboards
+
+The GPU/vLLM dashboards ship as sidecar-imported ConfigMaps from the
+`monitoring-extras` chart
+([apps/monitoring-extras/chart/dashboards/](../apps/monitoring-extras/chart/dashboards/)).
+Drop any `*.json` into that directory and re-apply the component to add a
+dashboard - no Helm values edit needed.

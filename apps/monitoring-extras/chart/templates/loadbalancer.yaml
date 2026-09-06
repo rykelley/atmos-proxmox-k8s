@@ -1,0 +1,94 @@
+{{- /*
+Cilium LoadBalancer IPAM + L2 announcement for the monitoring UIs. Each pool
+targets one Service by label so assignments stay independent of the other
+single-IP pools (.240 filament, .241 hubble, .242 vLLM). Ping-check any new IP
+before adding it — assigning one that already answers ARP breaks it silently.
+*/}}
+{{- if .Values.loadBalancer.grafana.enabled }}
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: grafana-lb-pool
+spec:
+  blocks:
+    - start: {{ .Values.loadBalancer.grafana.ip | quote }}
+      stop: {{ .Values.loadBalancer.grafana.ip | quote }}
+  serviceSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: grafana-lb-pool
+spec:
+  serviceSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  interfaces:
+    - {{ .Values.loadBalancer.interface | quote }}
+  loadBalancerIPs: true
+{{- end }}
+{{- if .Values.loadBalancer.ciliumIngress.enabled }}
+---
+# Shared Cilium Ingress controller entrypoint (kube-system/cilium-ingress). Cilium
+# creates this LoadBalancer Service when ingressController.enabled=true and labels
+# it cilium.io/ingress=true; every classic Ingress routes through it via Envoy.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: cilium-ingress-lb-pool
+spec:
+  blocks:
+    - start: {{ .Values.loadBalancer.ciliumIngress.ip | quote }}
+      stop: {{ .Values.loadBalancer.ciliumIngress.ip | quote }}
+  serviceSelector:
+    matchLabels:
+      cilium.io/ingress: "true"
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: cilium-ingress-lb-pool
+spec:
+  serviceSelector:
+    matchLabels:
+      cilium.io/ingress: "true"
+  interfaces:
+    - {{ .Values.loadBalancer.interface | quote }}
+  loadBalancerIPs: true
+{{- end }}
+{{- if and .Values.loadBalancer.prometheus .Values.loadBalancer.prometheus.enabled }}
+---
+# Edge (homelab-2) only: give the kube-prometheus-stack Prometheus Service a stable
+# LAN VIP so the hub (homelab-1) Grafana can query it as the Prometheus-edge
+# datasource. Selector matches the Service labels the chart sets on the Prometheus
+# (release name "monitoring"); it is set to type LoadBalancer in the edge values.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: prometheus-edge-lb-pool
+spec:
+  blocks:
+    - start: {{ .Values.loadBalancer.prometheus.ip | quote }}
+      stop: {{ .Values.loadBalancer.prometheus.ip | quote }}
+  serviceSelector:
+    matchLabels:
+      app: kube-prometheus-stack-prometheus
+      release: monitoring
+      app.kubernetes.io/instance: monitoring
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: prometheus-edge-lb-pool
+spec:
+  serviceSelector:
+    matchLabels:
+      app: kube-prometheus-stack-prometheus
+      release: monitoring
+      app.kubernetes.io/instance: monitoring
+  interfaces:
+    - {{ .Values.loadBalancer.interface | quote }}
+  loadBalancerIPs: true
+{{- end }}

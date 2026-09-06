@@ -1,4 +1,4 @@
-# Static inventory for cluster-B (the "edge" stage) — the Kargo promotion target.
+# Static inventory for cluster-B (the "edge" stage).
 #
 # Mirrors inventory/hosts.yml but for the STANDALONE Proxmox host pve2 (API at
 # 10.10.1.82). Mimics cluster-A's VM topology: 3-server HA control plane + 3
