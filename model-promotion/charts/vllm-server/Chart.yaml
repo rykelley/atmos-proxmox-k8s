@@ -1,7 +1,0 @@
-apiVersion: v2
-name: vllm-server
-description: Digest-pinned vLLM OpenAI server for the model-promotion pipeline (GPU).
-type: application
-version: 0.1.0
-# Matches the digest-pinned gemma4 image family (see envs/*/values.yaml).
-appVersion: "gemma4"

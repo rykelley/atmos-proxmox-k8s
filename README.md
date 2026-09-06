@@ -8,8 +8,8 @@ A complete, [Atmos](https://atmos.tools/)-driven workflow that stands up a
 | Infrastructure | **OpenTofu** (`bpg/proxmox`) | Clones 6 Ubuntu 24.04 VMs from a cloud-init template |
 | Configuration | **Ansible** | OS prep, HA k3s install, `kube-vip` control-plane VIP |
 | Add-ons | **Helmfile** | **Cilium** (CNI, kube-proxy replacement, Gateway API, L2 LB) + **Kyverno** (policy) |
-| GPU | **Helmfile** | **NVIDIA GPU Operator** (time-sliced) on a bare-metal Blackwell node + **vLLM** OpenAI-compatible LLM serving |
-| GitOps | **Argo CD** | Bootstrapped by Helmfile, then reconciles a **RAG platform** (Open WebUI + Qdrant + GPU embeddings) + **kube-prometheus-stack** from `gitops/` |
+| GPU | **Helmfile** | **NVIDIA GPU Operator** (exclusive card) on a bare-metal Blackwell node + **vLLM** OpenAI-compatible LLM serving |
+| Observability | **Helmfile** | **kube-prometheus-stack** + **Loki** + **Grafana Alloy**, with GPU/vLLM dashboards and the DCGM scrape (the `monitoring` component) |
 | Application | **Helm** | **Filament Tracker** - Next.js + Fastify microservices on Supabase Postgres |
 | Orchestration | **Atmos** | Ties all layers together via stacks + workflows |
 
@@ -79,24 +79,18 @@ components/
   helmfile/kyverno/               # Kyverno policy engine + starter + filament policies
   helmfile/filament-app/          # Filament Tracker app (local Helm chart)
   helmfile/hubble-ui/             # Exposes Hubble UI on the LAN (local Helm chart)
-  helmfile/gpu-operator/          # NVIDIA GPU Operator (device plugin + GFD + DCGM, time-slicing; toolkit off)
+  helmfile/gpu-operator/          # NVIDIA GPU Operator (device plugin + GFD + DCGM; toolkit off)
   helmfile/vllm/                  # vLLM OpenAI-compatible server (local Helm chart)
-  helmfile/argocd/                # Argo CD GitOps engine (bootstrap)
+  helmfile/monitoring/            # kube-prometheus-stack + Loki + Alloy + monitoring-extras (4 releases)
 apps/
   filament-tracker/               # app source: services/, web/, chart/
   hubble-ui-gateway/              # Gateway + HTTPRoute for Hubble UI
   vllm/                           # vLLM Helm chart (Deployment + LB Service + Cilium LB pool)
-gitops/                           # Argo CD app-of-apps (RAG platform + monitoring + logging)
-  root-app.yaml                   # app-of-apps root Application
-  apps/                           # child Applications (monitoring, monitoring-dashboards, loki, alloy, qdrant, embeddings, open-webui, networking, cluster-tools, zot)
-  networking/                     # Cilium LB pools for open-webui + grafana + zot (L2-announced on eth0|eno1)
-  embeddings/                     # GPU embeddings server (vLLM embed mode) manifests
-  monitoring-dashboards/          # custom Grafana dashboards as sidecar ConfigMaps (GPU + vLLM Overview)
-  cluster-tools/                  # read-only OpenAPI tool server ("chat with your cluster")
+  monitoring-extras/              # local chart: GPU/vLLM Grafana dashboards, DCGM ServiceMonitor, grafana + cilium-ingress LB pools
 stacks/
   catalog/cluster.yaml            # single source of truth (nodes, VIP, CIDRs, Proxmox params)
   deploy/prod/cluster.yaml        # prod stack wiring all components
-  workflows/cluster.yaml          # deploy-cluster / setup-gpu-os / deploy-gpu / deploy-rag / deploy-app / destroy-cluster
+  workflows/cluster.yaml          # deploy-cluster / setup-gpu-os / deploy-gpu / deploy-monitoring / deploy-app / destroy-cluster
 .github/workflows/build-images.yml # build + push the 3 images to GHCR
 ```
 
@@ -411,77 +405,40 @@ smaller card drop `vllm_model` to `Qwen/Qwen2.5-1.5B-Instruct`. For gated models
 create a Secret with an `HF_TOKEN` key in the `vllm` namespace and set
 `vllm_hf_token_secret` to its name.
 
-## RAG platform (GitOps: Argo CD + Open WebUI)
+## Monitoring (Prometheus + Grafana + Loki)
 
-A document-aware chat platform running entirely on the cluster, managed with
-**GitOps**: Helmfile bootstraps **Argo CD**, which then reconciles the RAG
-workloads and monitoring from the [`gitops/`](gitops/) directory. This layer
-also demonstrates **GPU sharing** - the single Blackwell GPU is time-sliced so
-the chat model and the embeddings model run on it simultaneously.
+Cluster + GPU observability, deployed as a single helmfile component
+(`monitoring`) with four releases: **kube-prometheus-stack** (Prometheus +
+Grafana + Alertmanager), **Loki** (log store), **Grafana Alloy** (log shipper),
+and a local **monitoring-extras** chart (GPU/vLLM dashboards, the DCGM
+`ServiceMonitor`, and the Grafana + cilium-ingress LB pools).
 
 Components:
 
 | Service | LB IP | Role |
 | --- | --- | --- |
-| Open WebUI | `10.10.1.243` | Chat UI + RAG document upload |
-| Argo CD | `10.10.1.244` | GitOps engine / sync dashboard |
-| Grafana | `10.10.1.245` | GPU + cluster dashboards (NVIDIA DCGM), logs (Loki) |
-| vLLM (chat) | `10.10.1.242` | OpenAI-compatible chat completions |
-| Qdrant | in-cluster | Vector database (embeddings store) |
-| embeddings | in-cluster | vLLM embed-mode (`BAAI/bge-base-en-v1.5`) |
+| Grafana | `10.10.1.245` | GPU + vLLM dashboards (NVIDIA DCGM), logs (Loki) |
+| Prometheus | `10.10.1.248` (ingress) | Metrics store / query, via the shared cilium-ingress entrypoint |
+| vLLM | `10.10.1.242` | OpenAI-compatible chat completions (scraped for metrics) |
 | Loki | in-cluster | Log storage + query engine (filesystem-backed) |
 | Grafana Alloy | in-cluster (DaemonSet) | Ships every pod's logs to Loki |
-| cluster-tools | in-cluster | Read-only OpenAPI tool server so the LLM can inspect the cluster |
 
 ```mermaid
 flowchart LR
-  user["Browser"] --> owui["Open WebUI :243"]
-  owui -->|chat| vllm["vLLM :242"]
-  owui -->|embeddings| emb["embeddings (GPU)"]
-  owui -->|vectors| qdrant["Qdrant"]
-  vllm --> gpu["Blackwell GPU (time-sliced)"]
-  emb --> gpu
-  argocd["Argo CD :244"] -->|app-of-apps| owui & qdrant & emb & mon["kube-prometheus-stack"] & loki["Loki"] & alloy["Alloy (DaemonSet)"]
-  dcgm["DCGM exporter"] --> mon
-  alloy -->|every pod's logs| loki
-  mon --> grafana["Grafana :245"]
+  vllm["vLLM :242"] --> gpu["Blackwell GPU"]
+  dcgm["DCGM exporter"] --> prom["Prometheus"]
+  vllm -->|/metrics| prom
+  alloy["Alloy (DaemonSet)"] -->|every pod's logs| loki["Loki"]
+  prom --> grafana["Grafana :245"]
   loki -->|Loki datasource| grafana
-```
-
-### GPU time-slicing
-
-So both the chat LLM and the embeddings model fit on one GPU, the GPU Operator
-advertises the card as several logical `nvidia.com/gpu` devices
-(`gpu_timeslicing_replicas`, default 4 in
-[stacks/catalog/cluster.yaml](stacks/catalog/cluster.yaml)). Time-slicing
-**shares** VRAM (it does not partition it), so vLLM's
-`vllm_gpu_memory_utilization` is lowered to `0.55` to leave room for the
-embeddings model. Budget these two values to your card's VRAM.
-
-### Prerequisite: Argo CD repo access
-
-Argo CD pulls the `gitops/` manifests from this Git repo. If your fork is
-**private**, register a read-only credential before syncing (or make the repo
-public). Update `repoURL` in the `gitops/*.yaml` files if you forked.
-
-```bash
-export KUBECONFIG=$PWD/components/ansible/k3s/fetched/kubeconfig
-# Option A: HTTPS + a GitHub PAT (read-only)
-kubectl -n argocd create secret generic repo-atmos-proxmox-k8s \
-  --from-literal=type=git \
-  --from-literal=url=https://github.com/rykelley/atmos-proxmox-k8s.git \
-  --from-literal=username=<github-user> \
-  --from-literal=password=<github-PAT>
-kubectl -n argocd label secret repo-atmos-proxmox-k8s argocd.argoproj.io/secret-type=repository
-# Option B: make the GitHub repo public (no secret needed)
 ```
 
 ### Prerequisite: Grafana admin secret
 
 Grafana reads its admin login from an **out-of-band** secret (`grafana-admin`, not
 in Git) so the password is stable across pod restarts — Grafana has no PV, so a
-UI-set password would otherwise be lost. Create it **before** Argo syncs
-`monitoring` (the pod won't start without it):
+UI-set password would otherwise be lost. Create it **before** applying the
+`monitoring` component (the Grafana pod won't start without it):
 
 ```bash
 export KUBECONFIG=$PWD/components/ansible/k3s/fetched/kubeconfig
@@ -497,19 +454,14 @@ To change it later: update the secret and
 ### Deploy
 
 ```bash
-atmos workflow deploy-rag -f cluster
+atmos workflow deploy-monitoring -f cluster
 ```
 
-This enables GPU time-slicing, re-applies vLLM, bootstraps Argo CD, and applies
-[gitops/root-app.yaml](gitops/root-app.yaml). Argo CD then syncs everything
-under [gitops/apps/](gitops/apps/). Or step by step:
+That is a thin wrapper over a single helmfile apply (create the `grafana-admin`
+secret first, above):
 
 ```bash
-atmos helmfile apply gpu-operator -s prod -- --skip-diff-on-install  # time-slicing
-atmos helmfile apply vllm -s prod -- --skip-diff-on-install          # lowered VRAM
-atmos helmfile apply argocd -s prod -- --skip-diff-on-install        # GitOps engine
-KUBECONFIG=$PWD/components/ansible/k3s/fetched/kubeconfig \
-  kubectl apply -f gitops/root-app.yaml                              # hand off to Argo CD
+atmos helmfile apply monitoring -s prod -- --skip-diff-on-install
 ```
 
 ### Verify
@@ -517,40 +469,32 @@ KUBECONFIG=$PWD/components/ansible/k3s/fetched/kubeconfig \
 ```bash
 export KUBECONFIG=$PWD/components/ansible/k3s/fetched/kubeconfig
 
-# GPU now advertises multiple logical devices
-kubectl describe node k3s-gpu1 | grep -A8 Allocatable | grep nvidia.com/gpu   # -> 4
+# Monitoring stack up (Prometheus, Grafana, Alertmanager, Loki, Alloy)
+kubectl -n monitoring get pods
 
-# Argo CD login (initial admin password)
-kubectl -n argocd get secret argocd-initial-admin-secret \
-  -o jsonpath='{.data.password}' | base64 -d; echo
-# then browse http://10.10.1.244  (user: admin)
+# Grafana reachable on its LB VIP (user: admin)
+curl -sf http://10.10.1.245/api/health
 
-# All Applications Synced/Healthy
-kubectl -n argocd get applications
-
-# Chat + embeddings pods co-scheduled on the GPU node
+# vLLM still serving on the GPU node
 kubectl -n vllm get pods -o wide
-kubectl -n rag get pods -o wide
 ```
 
 ### Use it
 
-1. Browse to **`http://10.10.1.243`** and create the first Open WebUI account
-   (it becomes the admin).
-2. The vLLM chat model appears in the model picker automatically.
-3. Upload a document (click `+` / Documents), then ask a question about it -
-   Open WebUI embeds the doc via the GPU embeddings server, stores vectors in
-   Qdrant, retrieves the relevant chunks, and grounds vLLM's answer on them.
-4. Watch **`http://10.10.1.245`** (Grafana -> NVIDIA DCGM dashboard) - GPU
-   utilization and memory spike during inference.
+1. Browse to **`http://10.10.1.245`** (Grafana) and log in as `admin` (anonymous
+   Viewer access also works for browsing).
+2. Open the **GPU + vLLM Overview** dashboard - GPU utilization, VRAM, power, and
+   temp (DCGM) next to vLLM throughput, queue depth, and latency.
+3. Drive some load against vLLM (`10.10.1.242`) and watch the panels move; the
+   `ollama-lb-test/` sweep is an easy way to generate traffic.
 
 ### Logs (Loki + Grafana Alloy)
 
-Every pod's logs across the whole cluster - not just the RAG namespace - are
-shipped to **Loki** by **Grafana Alloy**
-([gitops/apps/alloy.yaml](gitops/apps/alloy.yaml),
-[gitops/apps/loki.yaml](gitops/apps/loki.yaml)) and queryable from Grafana
-alongside metrics, so you don't need `kubectl logs` to debug what happened:
+Every pod's logs across the whole cluster - not just one namespace - are
+shipped to **Loki** by **Grafana Alloy** (the `alloy` and `loki` releases in
+[components/helmfile/monitoring/helmfile.yaml.gotmpl](components/helmfile/monitoring/helmfile.yaml.gotmpl))
+and queryable from Grafana alongside metrics, so you don't need `kubectl logs`
+to debug what happened:
 
 1. Open **`http://10.10.1.245`** -> **Explore** -> pick the **Loki**
    datasource.
@@ -558,7 +502,7 @@ alongside metrics, so you don't need `kubectl logs` to debug what happened:
 
    ```logql
    {namespace="vllm"}
-   {namespace="rag", pod=~"embeddings.*"} |= "error"
+   {namespace="vllm"} |= "error"
    {namespace="gpu-operator"} | logfmt
    ```
 
@@ -574,26 +518,23 @@ learning/homelab volume, not production log scale.
 
 ### vLLM metrics (capacity dashboard)
 
-Both vLLM servers (chat and embeddings) expose their own Prometheus metrics at
+vLLM exposes its own Prometheus metrics at
 `/metrics` on the same port as the OpenAI API - queue depth, time-to-first-token,
 tokens/sec, KV cache usage, and per-request latency percentiles. A
 `ServiceMonitor` in the vLLM chart
 ([apps/vllm/chart/templates/servicemonitor.yaml](apps/vllm/chart/templates/servicemonitor.yaml))
-and one alongside the embeddings manifests
-([gitops/embeddings/servicemonitor.yaml](gitops/embeddings/servicemonitor.yaml))
-get both scraped automatically (`serviceMonitorSelectorNilUsesHelmValues:
-false` means Prometheus watches every namespace). Grafana ships the community
+gets scraped automatically (`serviceMonitorSelectorNilUsesHelmValues: false`
+means Prometheus watches every namespace). Grafana ships the community
 [vLLM dashboard](https://grafana.com/grafana/dashboards/23991-vllm/)
 (`gnetId: 23991`) alongside the NVIDIA DCGM one.
 
 On top of those, a purpose-built **GPU + vLLM Overview** dashboard ties the
 whole stack together on one board: GPU health (DCGM utilization / VRAM / power /
 temp), vLLM throughput / queue / KV-cache, time-to-first-token and end-to-end
-latency percentiles, GPU-handle allocation per node (the time-slicing/sharing
-story), tokens/sec per pod, and a Loki logs panel for vLLM/RAG errors. It is
-delivered GitOps-style as a `grafana_dashboard=1` ConfigMap
-([gitops/monitoring-dashboards/gpu-vllm-overview.yaml](gitops/monitoring-dashboards/gpu-vllm-overview.yaml),
-synced by [gitops/apps/monitoring-dashboards.yaml](gitops/apps/monitoring-dashboards.yaml))
+latency percentiles, GPU-handle allocation per node, tokens/sec per pod, and a
+Loki logs panel for vLLM errors. It is delivered as a `grafana_dashboard=1`
+ConfigMap by the monitoring-extras chart
+([apps/monitoring-extras/chart/dashboards/](apps/monitoring-extras/chart/dashboards/))
 that Grafana's dashboard sidecar auto-imports - no Helm values edit needed. Its
 panels bind to `DS_PROMETHEUS`/`DS_LOKI` datasource variables so they attach to
 the default datasources rather than hard-coded UIDs.
@@ -608,97 +549,18 @@ vllm:num_requests_waiting                                    # queue depth right
 vllm:kv_cache_usage_perc                                      # how full the KV cache is
 ```
 
-### Chat with your cluster (LLM tool calling)
+### Make a change
 
-The most fun part: the chat model can inspect the cluster it runs on.
-[gitops/cluster-tools/](gitops/cluster-tools/) deploys a small **read-only
-OpenAPI tool server** (FastAPI) that exposes six tools - PromQL queries, LogQL
-log search, pods, events, nodes, and Argo CD app status - backed by a
-get/list-only ClusterRole (no secrets, no writes). Open WebUI ingests its
-OpenAPI spec and lets the LLM call the endpoints mid-conversation.
-
-One-time setup in Open WebUI (admin account):
-
-1. **Admin Settings -> Tools** (or **Settings -> Connections** on newer
-   versions) -> add a tool server.
-2. URL: `http://cluster-tools.rag.svc.cluster.local:8000` - make sure it's
-   `http://`, not the pre-filled `https://`.
-3. Save. In a chat, open the **+** menu and enable the cluster tools.
-
-> **Native function calling must be enabled on vLLM.** Open WebUI sends
-> `tool_choice=auto`, which vLLM rejects unless it was started with
-> `--enable-auto-tool-choice` and a `--tool-call-parser` (`hermes` for Qwen2.5).
-> These are set via `vllm_extra_args` in
-> [stacks/catalog/cluster.yaml](stacks/catalog/cluster.yaml); without them the
-> chat errors with *"auto tool choice requires ..."*. Also note tools are
-> per-conversation - start a **new** chat after enabling them (an old chat that
-> errored will keep replaying its stored error).
-
-Then ask things like:
-
-- *"Which pods are not ready right now, and why?"* (pods + events)
-- *"Why did vLLM restart last night?"* (Loki log search)
-- *"How hot is the GPU and what's the current tokens/sec?"* (PromQL)
-- *"Is everything Argo manages in sync?"* (Argo CD apps)
-
-The LLM answering is the same vLLM server whose queue depth it can report -
-the cluster explains itself, from its own telemetry, on its own GPU.
-
-### GitOps loop
-
-Change a workload by editing its file under [gitops/apps/](gitops/apps/) (e.g.
-bump a chart version or tweak Open WebUI env), commit, and push to `main`. Argo
-CD detects the change and syncs it - no `helmfile`/`kubectl` needed. This is the
-core GitOps workflow this layer is meant to teach.
-
-## Container registry (zot)
-
-[zot](https://zotregistry.dev/) is an OCI-native registry that gives the cluster
-somewhere to push its own images without going out to GHCR. It is another Argo
-CD Application ([gitops/apps/zot.yaml](gitops/apps/zot.yaml)) served on a
-dedicated Cilium L2 LoadBalancer at **`http://10.10.1.252:5000`**, with its
-blob store on the NAS via the `nfs-client` StorageClass.
-
-> **No TLS, no authentication.** Like Hubble UI and Kargo, this is a LAN-only
-> service - anyone on `10.10.1.0/24` can push and overwrite tags. Add htpasswd
-> auth through the chart's `mountSecret` / `secretFiles` values before exposing
-> it any wider.
-
-### Let the nodes pull from it
-
-containerd speaks HTTPS by default, so every node needs
-`/etc/rancher/k3s/registries.yaml` marking the endpoint as an HTTP mirror.
-Without it, pulls fail with `http: server gave HTTP response to HTTPS client`.
-The playbook writes the file and restarts k3s **one node at a time** (only where
-the config actually changed):
+Edit the component's values - chart versions or Grafana/Loki/Alloy config in
+[components/helmfile/monitoring/helmfile.yaml.gotmpl](components/helmfile/monitoring/helmfile.yaml.gotmpl),
+dashboards under
+[apps/monitoring-extras/chart/dashboards/](apps/monitoring-extras/chart/dashboards/)
+(drop in any `*.json` and it is auto-wrapped as a sidecar ConfigMap) - then
+re-apply:
 
 ```bash
-atmos ansible playbook k3s-registries -s prod     # -s edge for cluster-B
+atmos helmfile apply monitoring -s prod
 ```
-
-### Use it
-
-```bash
-# Browse the UI + search extension
-open http://10.10.1.252:5000
-
-# Push (the client also needs to treat it as insecure — Docker Desktop:
-# Settings -> Docker Engine -> "insecure-registries": ["10.10.1.252:5000"])
-docker tag myapp:1.0 10.10.1.252:5000/myapp:1.0
-docker push 10.10.1.252:5000/myapp:1.0
-
-# List repositories / tags
-curl http://10.10.1.252:5000/v2/_catalog
-```
-
-Then reference it from any workload:
-
-```yaml
-image: 10.10.1.252:5000/myapp:1.0
-```
-
-zot exports Prometheus metrics at `/metrics`; the chart's `ServiceMonitor` is
-enabled, so kube-prometheus-stack scrapes it automatically.
 
 ## Troubleshooting
 
@@ -752,21 +614,10 @@ enabled, so kube-prometheus-stack scrapes it automatically.
   `vllm_image_tag` is too old for Blackwell (sm_120). Pin a release built
   against CUDA 12.8+ (e.g. `v0.11.0` or newer) in the `vllm` component vars.
 
-- **Argo CD Applications stuck `ComparisonError` / `repository not found`:**
-  the `gitops/` repo isn't reachable. Add repo credentials (see "Argo CD repo
-  access" above) or make the repo public, and confirm `repoURL` in
-  [gitops/root-app.yaml](gitops/root-app.yaml) matches your fork.
-
-- **vLLM or embeddings pod `Pending` after time-slicing, or CUDA OOM in logs:**
-  both models share one GPU's VRAM. Lower `vllm_gpu_memory_utilization` further,
-  drop `vllm_model` to `Qwen2.5-1.5B-Instruct`, and/or reduce the embeddings
-  `--gpu-memory-utilization` in [gitops/embeddings/deployment.yaml](gitops/embeddings/deployment.yaml).
-  Confirm the GPU advertises `nvidia.com/gpu: 4` (time-slicing took effect).
-
-- **Open WebUI RAG returns "no relevant context" / embedding errors:** check the
-  embeddings pod is Ready and that `RAG_EMBEDDING_MODEL` in
-  [gitops/apps/open-webui.yaml](gitops/apps/open-webui.yaml) matches the model
-  the embeddings server lists at `/v1/models`.
+- **vLLM pod `Pending` or CUDA OOM in logs:** the card is now exclusive (one
+  `nvidia.com/gpu` per node), so only one GPU pod schedules per node. Lower
+  `vllm_gpu_memory_utilization`, or drop `vllm_model` to `Qwen2.5-1.5B-Instruct`
+  if VRAM is tight.
 
 - **A LoadBalancer VIP is reachable in-cluster but dark from the LAN (curl to
   `10.10.1.24x` times out, but the pod/Service/endpoints are healthy):** Cilium
@@ -775,9 +626,9 @@ enabled, so kube-prometheus-stack scrapes it automatically.
   no ARP replies. The Proxmox VMs name their LAN NIC `eth0`, but the bare-metal
   GPU box (`k3s-gpu1`) uses `eno1` - so a policy matching only `^eth0$` goes dark
   whenever the GPU node is elected. All policies here use `^(eth0|eno1)$` for this
-  reason (`vllm_lb_interface` / `argocd_lb_interface` / `gateway_interface` in
-  [stacks/catalog/cluster.yaml](stacks/catalog/cluster.yaml), and the pools in
-  [gitops/networking/loadbalancer-pools.yaml](gitops/networking/loadbalancer-pools.yaml)).
+  reason (`vllm_lb_interface` / `monitoring_lb_interface` / `gateway_interface`
+  in [stacks/catalog/cluster.yaml](stacks/catalog/cluster.yaml), and the pools
+  in [apps/monitoring-extras/chart/templates/loadbalancer.yaml](apps/monitoring-extras/chart/templates/loadbalancer.yaml)).
   Check the elected announcer and its interface with:
 
   ```bash

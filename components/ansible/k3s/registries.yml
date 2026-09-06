@@ -1,7 +1,9 @@
 ---
-# Standalone: point every node's containerd at the in-cluster zot registry.
+# Standalone: point every node's containerd at a plain-HTTP registry mirror.
 #
-# zot (gitops/apps/zot.yaml) is served over PLAIN HTTP on 10.10.1.252:5000.
+# Optional helper for running a LAN-local OCI registry over PLAIN HTTP on
+# 10.10.1.252:5000 (the in-cluster zot registry was removed from this repo, but
+# the same mirror config applies to any HTTP registry you run at that address).
 # containerd defaults to HTTPS, so without this file every pull from that
 # endpoint fails with `http: server gave HTTP response to HTTPS client`.
 # k3s renders /etc/rancher/k3s/registries.yaml into its containerd config on

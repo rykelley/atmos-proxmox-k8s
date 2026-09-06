@@ -1,0 +1,25 @@
+{{- /*
+One ConfigMap per JSON in chart/dashboards/. .Files.Get returns the file content
+verbatim (no Helm templating), so Grafana's own {{ ... }} legend/variable syntax
+inside the JSON is preserved. The grafana_dashboard=1 label makes the
+kube-prometheus-stack sidecar auto-import them.
+*/}}
+{{- if .Values.dashboards.enabled }}
+{{- range $path, $_ := .Files.Glob "dashboards/*.json" }}
+{{- $file := base $path }}
+{{- $name := trimSuffix ".json" $file }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-dashboard
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/name: {{ $name }}-dashboard
+    app.kubernetes.io/part-of: monitoring
+data:
+  {{ $file }}: |-
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}
+{{- end }}

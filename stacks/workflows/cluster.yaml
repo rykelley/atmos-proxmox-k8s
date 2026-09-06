@@ -61,36 +61,20 @@ workflows:
       - name: deploy-vllm
         command: helmfile apply vllm -s prod -- --skip-diff-on-install
 
-  deploy-rag:
-    description: "GitOps RAG platform: enable GPU time-slicing, bootstrap Argo CD, then let it sync Open WebUI + Qdrant + embeddings + monitoring."
+  deploy-monitoring:
+    description: "Deploy the observability stack (Prometheus + Grafana + Loki + Alloy) plus the GPU/vLLM dashboards, DCGM scrape, and Grafana/cilium-ingress LB pools. Requires the grafana-admin Secret (see components/helmfile/monitoring/helmfile.yaml.gotmpl) and the GPU Operator (DCGM exporter) already up."
     steps:
-      # Re-apply gpu-operator (time-slicing) + vLLM (lowered VRAM) so the GPU is
-      # shareable before the embeddings pod also claims a slice.
-      - name: apply-gpu-timeslicing
-        command: helmfile apply gpu-operator -s prod -- --skip-diff-on-install
-      - name: reapply-vllm
-        command: helmfile apply vllm -s prod -- --skip-diff-on-install
-      - name: bootstrap-argocd
-        command: helmfile apply argocd -s prod -- --skip-diff-on-install
-      - name: apply-root-app
-        # Hands control to Argo CD: it reconciles everything under gitops/apps/.
-        # NOTE: for a private repo, register repo credentials in Argo CD first
-        # (see README) or make the repo public.
-        type: shell
-        command: |
-          KUBECONFIG="${HOME}/.kube/atmos-k3s.yaml" kubectl apply -f gitops/root-app.yaml
+      - name: deploy-monitoring
+        # --skip-diff-on-install: the monitoring-extras release renders a
+        # ServiceMonitor whose CRD is installed by kube-prometheus-stack in the
+        # same apply.
+        command: helmfile apply monitoring -s prod -- --skip-diff-on-install
 
   destroy-cluster:
     description: "Tear down the cluster in reverse order (removes the VMs)."
     steps:
-      - name: destroy-rag-apps
-        # Deleting the root Application cascades (via finalizer) to the RAG +
-        # monitoring apps Argo manages. Best-effort.
-        type: shell
-        command: |
-          KUBECONFIG="${HOME}/.kube/atmos-k3s.yaml" kubectl delete -f gitops/root-app.yaml --ignore-not-found --wait=false || true
-      - name: destroy-argocd
-        command: helmfile destroy argocd -s prod
+      - name: destroy-monitoring
+        command: helmfile destroy monitoring -s prod
         # Best-effort: the cluster may already be gone.
       - name: destroy-vllm
         command: helmfile destroy vllm -s prod
@@ -124,7 +108,7 @@ workflows:
         command: terraform plan proxmox-vms -s prod
 
   deploy-cluster-b:
-    description: "Provision cluster-B (the Kargo prod target) on the standalone Proxmox host pve2 (10.10.1.82): 3-server HA k3s + kube-vip (VIP 10.10.1.50), then Cilium. CPU-only. Requires PROXMOX_VE_B_* in .env and the ubuntu-2404-cloudinit template on pve2 (see scripts/create-ubuntu-template.sh)."
+    description: "Provision cluster-B (edge) on the standalone Proxmox host pve2 (10.10.1.82): 3-server HA k3s + kube-vip (VIP 10.10.1.50), then Cilium. CPU-only control plane (its GPU node runs vLLM separately). Requires PROXMOX_VE_B_* in .env and the ubuntu-2404-cloudinit template on pve2 (see scripts/create-ubuntu-template.sh)."
     steps:
       - name: provision-vms
         command: terraform apply proxmox-vms -s edge -auto-approve
@@ -152,43 +136,3 @@ workflows:
     steps:
       - name: plan
         command: terraform plan proxmox-vms -s edge
-
-  register-cluster-b:
-    description: "Register cluster-B with the hub's Argo CD: creates an argocd-manager SA + cluster-admin binding on cluster-B and an Argo CD cluster Secret on the hub (cluster-A). Run after deploy-cluster-b, and after Argo CD is up on cluster-A (deploy-rag)."
-    steps:
-      - name: register
-        type: shell
-        command: |
-          bash scripts/register-cluster-b-argocd.sh
-
-  deploy-kargo:
-    description: "Install Kargo (+ cert-manager prereq) on cluster-A and bootstrap the vLLM promotion pipeline (Project/Warehouse/Stages). Promotes the model config from staging (cluster-A GPU canary) to prod (cluster-B CPU). Requires KARGO_ADMIN_* and KARGO_GIT_* in .env, and both clusters + Argo CD already up (deploy-rag, deploy-cluster-b, register-cluster-b)."
-    steps:
-      - name: deploy-cert-manager
-        command: helmfile apply cert-manager -s prod
-      - name: install-kargo
-        # --skip-diff-on-install: Kargo installs its own CRDs in the same apply.
-        command: helmfile apply kargo -s prod -- --skip-diff-on-install
-      - name: expose-kargo-ui
-        # Cilium Gateway API "ingress" for the Kargo UI on 10.10.1.247.
-        type: shell
-        command: |
-          KUBECONFIG="${HOME}/.kube/atmos-k3s.yaml" kubectl apply -f kargo/kargo-gateway.yaml
-      - name: setup-project
-        type: shell
-        command: |
-          bash scripts/setup-kargo-project.sh
-
-  destroy-kargo:
-    description: "Remove the Kargo pipeline + Kargo + cert-manager from cluster-A (best-effort)."
-    steps:
-      - name: delete-pipeline
-        type: shell
-        command: |
-          KUBECONFIG="${HOME}/.kube/atmos-k3s.yaml" kubectl delete -f kargo/kargo-gateway.yaml --ignore-not-found || true
-          KUBECONFIG="${HOME}/.kube/atmos-k3s.yaml" kubectl delete -f kargo/pipeline.yaml --ignore-not-found || true
-          KUBECONFIG="${HOME}/.kube/atmos-k3s.yaml" kubectl delete -f kargo/project.yaml --ignore-not-found || true
-      - name: destroy-kargo
-        command: helmfile destroy kargo -s prod
-      - name: destroy-cert-manager
-        command: helmfile destroy cert-manager -s prod

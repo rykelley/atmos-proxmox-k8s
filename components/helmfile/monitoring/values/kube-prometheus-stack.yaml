@@ -1,0 +1,132 @@
+# homelab-1 — kube-prometheus-stack values.
+# Chart: prometheus-community/kube-prometheus-stack 87.17.0
+# Consumed by components/helmfile/monitoring/helmfile.yaml.gotmpl (the `monitoring`
+# atmos component). The pin is frozen deliberately; bump it in the helmfile release
+# and re-apply with `atmos helmfile apply monitoring -s prod` when you want to move.
+
+# --- Grafana (staging hosts the unified UI for now; Phase 3 adds prod DS) ---
+grafana:
+  service:
+    type: LoadBalancer
+    annotations:
+      # Existing LAN VIP (gitops/networking/loadbalancer-pools.yaml).
+      io.cilium/lb-ipam-ips: "10.10.1.245"
+  # Stable admin creds from an OUT-OF-BAND secret (not in Git).
+  #   kubectl -n monitoring create secret generic grafana-admin \
+  #     --from-literal=admin-user=admin \
+  #     --from-literal=admin-password='<your-password>'
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  grafana.ini:
+    auth.anonymous:
+      enabled: true
+      org_role: Viewer
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: default
+          orgId: 1
+          folder: ""
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/default
+  dashboards:
+    default:
+      nvidia-dcgm:
+        # NVIDIA DCGM Exporter dashboard (grafana.com/dashboards/12239)
+        gnetId: 12239
+        revision: 2
+        datasource: Prometheus
+      vllm:
+        # vLLM inference server dashboard (grafana.com/dashboards/23991)
+        gnetId: 23991
+        revision: 3
+        datasource: Prometheus
+  additionalDataSources:
+    # Logs from Loki (single-binary release in this same namespace, installed by
+    # the loki release in the monitoring helmfile). Grafana's GPU/vLLM dashboard
+    # binds its log panel to this via the DS_LOKI variable.
+    - name: Loki
+      type: loki
+      access: proxy
+      url: http://loki-gateway.monitoring.svc.cluster.local
+      isDefault: false
+    # The edge cluster's Prometheus (homelab-2), exposed on a LAN LB VIP by the
+    # prometheus-edge-lb-pool (monitoring-extras chart, applied with -s edge).
+    # This makes the hub Grafana the single pane for BOTH clusters: pick this
+    # datasource (or use the dashboard datasource dropdown) to view edge GPU/vLLM
+    # metrics. Series from edge carry the label cluster=edge (hub = cluster=hub).
+    - name: Prometheus-edge
+      type: prometheus
+      access: proxy
+      url: http://10.10.1.251:9090
+      isDefault: false
+
+# --- Prometheus ---
+prometheus:
+  ingress:
+    enabled: true
+    ingressClassName: cilium
+    hosts:
+      - prometheus-staging.rykelley.com
+    paths:
+      - /
+    pathType: Prefix
+    # Plain HTTP on the LAN (Cilium ingressController.enforceHttps=false).
+    # Point DNS: prometheus-staging.rykelley.com -> 10.10.1.248 (cilium-ingress).
+  prometheusSpec:
+    retention: 7d
+    # Watch ServiceMonitors/PodMonitors in every namespace, not just those
+    # carrying the Helm release label.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    # Tag every series from this cluster so Grafana can tell the hub and edge
+    # Prometheis apart (edge sets cluster=edge in the edge values).
+    externalLabels:
+      cluster: hub
+    # PVC intentionally omitted on staging for the Phase 1 cutover: the live
+    # release has no storageSpec, and adding one recreates the Prometheus
+    # StatefulSet (TSDB wipe). When you want persistence, uncomment below
+    # (storageClassName: local-path) and sync deliberately.
+    # storageSpec:
+    #   volumeClaimTemplate:
+    #     spec:
+    #       storageClassName: local-path
+    #       accessModes: ["ReadWriteOnce"]
+    #       resources:
+    #         requests:
+    #           storage: 20Gi
+
+  # Scrape the GPU Operator's DCGM exporter (namespace gpu-operator) and the local
+  # vLLM server so the hub's own GPU/vLLM dashboards have data (the edge values
+  # define the same pair for homelab-2).
+  additionalServiceMonitors:
+    - name: dcgm-exporter
+      namespaceSelector:
+        matchNames:
+          - gpu-operator
+      selector:
+        matchLabels:
+          app: nvidia-dcgm-exporter
+      endpoints:
+        - port: gpu-metrics
+          interval: 15s
+    # vLLM exposes Prometheus metrics on its main HTTP port at /metrics.
+    - name: vllm
+      namespaceSelector:
+        matchNames:
+          - vllm
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: vllm
+      endpoints:
+        - port: http
+          path: /metrics
+          interval: 15s
+
+# Alertmanager stays chart-default (ClusterIP). Not exposed in Phase 1.

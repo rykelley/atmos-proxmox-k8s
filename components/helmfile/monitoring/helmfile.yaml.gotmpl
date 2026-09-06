@@ -1,0 +1,207 @@
+# Monitoring stack for homelab-1: kube-prometheus-stack (Prometheus + Grafana +
+# Alertmanager), Loki (log store), Grafana Alloy (log shipper), and a local
+# monitoring-extras chart (GPU/vLLM dashboards, DCGM ServiceMonitor, Grafana +
+# cilium-ingress LB pools). Formerly four Argo CD Applications (monitoring, loki,
+# alloy, monitoring-dashboards) plus gitops/networking; now one helmfile release
+# set applied with `atmos helmfile apply monitoring -s prod`.
+#
+# Atmos passes stack `vars` as Helmfile state values (.Values.*) and sets
+# KUBECONFIG via the component env.
+#
+# PREREQUISITE (Grafana admin creds, out-of-band, not in Git):
+#   kubectl -n {{ dig "monitoring_namespace" "monitoring" .Values }} create secret generic grafana-admin \
+#     --from-literal=admin-user=admin \
+#     --from-literal=admin-password='<your-password>'
+
+repositories:
+  - name: prometheus-community
+    url: https://prometheus-community.github.io/helm-charts
+  - name: grafana
+    url: https://grafana.github.io/helm-charts
+
+{{- $ns := dig "monitoring_namespace" "monitoring" .Values }}
+{{- /*
+  Per-stack shape. The hub (homelab-1, `-s prod`) runs the full stack: Prometheus
+  + Grafana + Alertmanager, Loki, Alloy, and the monitoring-extras chart (Grafana
+  is the single UI for BOTH clusters). The edge (homelab-2, `-s edge`) runs a
+  Prometheus-only slice (Grafana/Loki/Alloy off) exposed on a LAN LB IP; the hub
+  Grafana adds it as the `Prometheus-edge` datasource. Toggle each via stack vars.
+*/}}
+{{- /* Use `dig` (keys off presence, not truthiness) for every bool toggle: the
+   Sprig `default` pipe treats an explicit `false` as empty and would flip it back
+   to the default. Scalars/strings below still use `default` safely. */}}
+{{- $kpsValues := dig "monitoring_kps_values" "values/kube-prometheus-stack.yaml" .Values }}
+{{- $lokiEnabled := dig "monitoring_loki_enabled" true .Values }}
+{{- $alloyEnabled := dig "monitoring_alloy_enabled" true .Values }}
+{{- $extrasEnabled := dig "monitoring_extras_enabled" true .Values }}
+{{- $dashboardsEnabled := dig "monitoring_dashboards_enabled" true .Values }}
+{{- $dcgmEnabled := dig "monitoring_dcgm_enabled" false .Values }}
+{{- $grafanaLbEnabled := dig "monitoring_grafana_lb_enabled" true .Values }}
+{{- $ciliumIngressEnabled := dig "monitoring_cilium_ingress_enabled" true .Values }}
+{{- $prometheusLbEnabled := dig "monitoring_prometheus_lb_enabled" false .Values }}
+
+releases:
+  - name: monitoring
+    namespace: {{ $ns }}
+    chart: prometheus-community/kube-prometheus-stack
+    version: {{ dig "monitoring_chart_version" "87.17.0" .Values | quote }}
+    createNamespace: true
+    wait: false
+    timeout: 900
+    # kube-prometheus-stack ships its large CRDs in the chart's crds/ dir, which
+    # Helm installs with `create` (not client-side apply) on a fresh install, so
+    # they don't hit the annotation-size limit. On a later CRD bump, apply the new
+    # CRDs server-side out-of-band (helm skips crds/ on upgrade).
+    values:
+      - {{ $kpsValues }}
+
+{{- if $lokiEnabled }}
+  - name: loki
+    namespace: {{ $ns }}
+    chart: grafana/loki
+    version: {{ dig "loki_chart_version" "7.1.0" .Values | quote }}
+    createNamespace: true
+    wait: false
+    timeout: 600
+    values:
+      # Single-binary, filesystem-backed homelab log store (not built for high
+      # volume or long retention). Grafana queries it via the Loki datasource at
+      # http://loki-gateway.monitoring.svc.cluster.local.
+      - deploymentMode: SingleBinary
+        loki:
+          auth_enabled: false
+          commonConfig:
+            replication_factor: 1
+          storage:
+            type: filesystem
+            bucketNames:
+              chunks: chunks
+              ruler: ruler
+              admin: admin
+          schemaConfig:
+            configs:
+              - from: "2024-04-01"
+                store: tsdb
+                object_store: filesystem
+                schema: v13
+                index:
+                  prefix: index_
+                  period: 24h
+          limits_config:
+            allow_structured_metadata: true
+            # Keep log storage bounded on a single node's disk.
+            retention_period: 168h
+          compactor:
+            retention_enabled: true
+            delete_request_store: filesystem
+        singleBinary:
+          replicas: 1
+          persistence:
+            enabled: true
+            size: 10Gi
+        # Zero out the other deployment targets - required by the chart's
+        # validation when running in SingleBinary mode.
+        read:
+          replicas: 0
+        write:
+          replicas: 0
+        backend:
+          replicas: 0
+        minio:
+          enabled: false
+        test:
+          enabled: false
+        lokiCanary:
+          enabled: false
+        # The chart's default memcached caches (~10Gi memory request) are built
+        # for large multi-tenant Loki, not this single-node/filesystem homelab -
+        # they can't schedule here. Disable both; Loki works fine without them at
+        # this log volume, just slightly slower on repeat queries.
+        chunksCache:
+          enabled: false
+        resultsCache:
+          enabled: false
+{{- end }}
+
+{{- if $alloyEnabled }}
+  - name: alloy
+    namespace: {{ $ns }}
+    chart: grafana/alloy
+    version: {{ dig "alloy_chart_version" "1.10.1" .Values | quote }}
+    createNamespace: true
+    wait: false
+    timeout: 600
+    values:
+      # DaemonSet that discovers every pod via the Kubernetes API and ships
+      # container logs to Loki (no hostPath /var/log mount needed).
+      - controller:
+          type: daemonset
+        alloy:
+          configMap:
+            content: |-
+              logging {
+                level  = "info"
+                format = "logfmt"
+              }
+
+              discovery.kubernetes "pods" {
+                role = "pod"
+              }
+
+              loki.source.kubernetes "pods" {
+                targets    = discovery.kubernetes.pods.targets
+                forward_to = [loki.write.endpoint.receiver]
+              }
+
+              loki.write "endpoint" {
+                endpoint {
+                  url = "http://loki-gateway.monitoring.svc.cluster.local/loki/api/v1/push"
+                }
+              }
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 384Mi
+{{- end }}
+
+{{- if $extrasEnabled }}
+  - name: monitoring-extras
+    namespace: {{ $ns }}
+    chart: ../../../apps/monitoring-extras/chart
+    createNamespace: true
+    # ServiceMonitor CRD is installed by the monitoring release above; needs to
+    # exist before this release's ServiceMonitor is applied.
+    needs:
+      - {{ $ns }}/monitoring
+    wait: false
+    timeout: 300
+    values:
+      - dashboards:
+          # Dashboards live in the hub Grafana only; edge has no Grafana.
+          enabled: {{ $dashboardsEnabled }}
+        # The DCGM ServiceMonitor is owned by the kube-prometheus-stack release
+        # (prometheus.additionalServiceMonitors in the kube-prometheus-stack values)
+        # to avoid a same-name collision. Keep this disabled unless you remove it
+        # from those values and let this chart own it instead.
+        dcgm:
+          enabled: {{ $dcgmEnabled }}
+          exporterNamespace: {{ dig "monitoring_dcgm_namespace" "gpu-operator" .Values | quote }}
+          interval: "15s"
+        loadBalancer:
+          interface: {{ dig "monitoring_lb_interface" "^(eth0|eno1)$" .Values | quote }}
+          grafana:
+            # Grafana LB pool: hub only (edge runs no Grafana).
+            enabled: {{ $grafanaLbEnabled }}
+            ip: {{ dig "monitoring_grafana_lb_ip" "10.10.1.245" .Values | quote }}
+          ciliumIngress:
+            enabled: {{ $ciliumIngressEnabled }}
+            ip: {{ dig "monitoring_cilium_ingress_lb_ip" "10.10.1.248" .Values | quote }}
+          # Prometheus LB pool: edge only. Gives the edge Prometheus a stable LAN
+          # VIP so the hub Grafana can reach it as the Prometheus-edge datasource.
+          prometheus:
+            enabled: {{ $prometheusLbEnabled }}
+            ip: {{ dig "monitoring_prometheus_lb_ip" "10.10.1.251" .Values | quote }}
+{{- end }}

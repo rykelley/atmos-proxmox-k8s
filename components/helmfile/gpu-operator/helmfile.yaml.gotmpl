@@ -16,7 +16,8 @@ repositories:
     url: https://helm.ngc.nvidia.com/nvidia
 
 {{- $ns := .Values.gpu_operator_namespace | default "gpu-operator" }}
-{{- $timeSlicing := .Values.gpu_timeslicing_enabled | default true }}
+{{- /* printf so YAML false / "false" both disable; a non-empty string "false" is true in Go if. */}}
+{{- $timeSlicing := eq (printf "%v" .Values.gpu_timeslicing_enabled) "true" }}
 {{- $replicas := .Values.gpu_timeslicing_replicas | default 4 }}
 
 releases:
@@ -57,6 +58,16 @@ releases:
                       - name: nvidia.com/gpu
                         replicas: {{ $replicas }}
             EOF
+    {{- else }}
+    # Drop leftover time-slicing ConfigMap so a later plugin restart cannot
+    # re-apply 4-way sharing from a stale object.
+    hooks:
+      - events: ["postsync"]
+        showlogs: true
+        command: sh
+        args:
+          - -c
+          - kubectl delete configmap time-slicing-config -n {{ $ns }} --ignore-not-found
     {{- end }}
     values:
       - # Host driver is pre-installed on the Blackwell box.
@@ -81,16 +92,19 @@ releases:
         # GPU metrics for observability (nice for learning). Disable if unwanted.
         dcgmExporter:
           enabled: {{ .Values.gpu_operator_dcgm_enabled | default true }}
-        {{- if $timeSlicing }}
 
-        # Point the device plugin at the time-slicing ConfigMap staged by the
-        # presync hook above. `default: any` applies the `any` profile to the
-        # (only) GPU node.
+        # Empty name clears a previously applied time-slicing ConfigMap ref.
+        # Omitting the key leaves ClusterPolicy.devicePlugin.config in place
+        # and the node keeps advertising N logical GPUs.
         devicePlugin:
           config:
+            {{- if $timeSlicing }}
             name: time-slicing-config
             default: "any"
-        {{- end }}
+            {{- else }}
+            name: ""
+            default: ""
+            {{- end }}
 
         # Let NFD detect the NVIDIA PCI device and label the node.
         nfd:

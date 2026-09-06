@@ -86,7 +86,8 @@ releases:
           enforceHttps: false
           service:
             # Cilium LB-IPAM assigns this specific address to the shared
-            # cilium-ingress Service (pool/L2 policy in gitops/networking).
+            # cilium-ingress Service (pool/L2 policy in the monitoring-extras
+            # chart: apps/monitoring-extras/chart/templates/loadbalancer.yaml).
             annotations:
               io.cilium/lb-ipam-ips: {{ .Values.ingress_lb_ip | default "10.10.1.248" | quote }}
 

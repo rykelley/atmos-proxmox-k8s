@@ -1,0 +1,236 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Two-cluster GPU inference homelab",
+    "locale": "en",
+    "output": "docs/architecture/gpu-inference-homelab.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "clients",
+      "type": "frontend",
+      "label": "LAN clients",
+      "sublabel": "OpenAI API + load-sweep",
+      "pos": [40, 118],
+      "size": [150, 64]
+    },
+    {
+      "id": "cilium",
+      "type": "security",
+      "label": "Cilium",
+      "sublabel": "CNI + L2 LB + ingress",
+      "pos": [230, 118],
+      "size": [150, 64]
+    },
+    {
+      "id": "vllm_hub",
+      "type": "backend",
+      "label": "vLLM hub",
+      "sublabel": "k3s-gpu1 · VIP 10.10.1.242",
+      "tag": "RTX PRO 2000 · DCGM",
+      "pos": [450, 118],
+      "size": [180, 68]
+    },
+    {
+      "id": "prometheus_hub",
+      "type": "database",
+      "label": "Prometheus hub",
+      "sublabel": "kube-prometheus-stack",
+      "brand": "prometheus",
+      "pos": [700, 120],
+      "size": [156, 64]
+    },
+    {
+      "id": "loki_alloy",
+      "type": "database",
+      "label": "Loki + Alloy",
+      "sublabel": "hub DaemonSet tail",
+      "pos": [450, 248],
+      "size": [180, 64]
+    },
+    {
+      "id": "grafana",
+      "type": "frontend",
+      "label": "Grafana",
+      "sublabel": "VIP 10.10.1.245",
+      "brand": "grafana",
+      "pos": [700, 248],
+      "size": [156, 64]
+    },
+    {
+      "id": "vllm_edge",
+      "type": "backend",
+      "label": "vLLM edge",
+      "sublabel": "k3s-gpu2 · VIP 10.10.1.253",
+      "tag": "RTX PRO 2000 · DCGM",
+      "pos": [450, 398],
+      "size": [180, 68]
+    },
+    {
+      "id": "prometheus_edge",
+      "type": "database",
+      "label": "Prometheus edge",
+      "sublabel": "VIP 10.10.1.251",
+      "brand": "prometheus",
+      "pos": [700, 400],
+      "size": [156, 64]
+    },
+    {
+      "id": "proxmox",
+      "type": "cloud",
+      "label": "Proxmox + Atmos",
+      "sublabel": "pve2 10.10.1.82 · hub IP unknown",
+      "pos": [40, 400],
+      "size": [190, 64]
+    },
+    {
+      "id": "zot",
+      "type": "external",
+      "label": "zot registry",
+      "sublabel": "10.10.1.252:5000 · placement unknown",
+      "pos": [920, 32],
+      "size": [180, 64]
+    },
+    {
+      "id": "nfs",
+      "type": "external",
+      "label": "Synology NFS",
+      "sublabel": "10.10.1.40:/volume1/NFS",
+      "pos": [920, 248],
+      "size": [180, 64]
+    },
+    {
+      "id": "huggingface",
+      "type": "external",
+      "label": "Hugging Face Hub",
+      "sublabel": "Qwen2.5-3B-Instruct",
+      "brand": "hugging-face",
+      "pos": [920, 490],
+      "size": [180, 64]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "LAN 10.10.1.0/24",
+      "wraps": ["clients", "cilium", "vllm_hub", "prometheus_hub", "grafana", "loki_alloy", "vllm_edge", "prometheus_edge", "proxmox"],
+      "pad": 22
+    },
+    {
+      "kind": "security-group",
+      "label": "HUB homelab-1 · stack prod",
+      "wraps": ["vllm_hub", "prometheus_hub", "grafana", "loki_alloy"],
+      "pad": 14
+    },
+    {
+      "kind": "security-group",
+      "label": "EDGE homelab-2 · stack edge",
+      "wraps": ["vllm_edge", "prometheus_edge"],
+      "pad": 14
+    },
+    {
+      "kind": "region",
+      "label": "External services",
+      "wraps": ["zot", "nfs", "huggingface"],
+      "pad": 16
+    }
+  ],
+  "connections": [
+    {
+      "from": "clients",
+      "to": "cilium",
+      "label": "OpenAI /v1",
+      "variant": "emphasis",
+      "labelDy": -26
+    },
+    {
+      "from": "cilium",
+      "to": "vllm_hub",
+      "variant": "emphasis"
+    },
+    {
+      "from": "cilium",
+      "to": "vllm_edge",
+      "label": "VIP 10.10.1.253",
+      "labelDy": 40
+    },
+    {
+      "from": "vllm_hub",
+      "to": "prometheus_hub",
+      "label": "vLLM + DCGM"
+    },
+    {
+      "from": "vllm_edge",
+      "to": "prometheus_edge",
+      "label": "vLLM + DCGM"
+    },
+    {
+      "from": "prometheus_hub",
+      "to": "grafana"
+    },
+    {
+      "from": "prometheus_edge",
+      "to": "grafana",
+      "label": "Prometheus-edge :9090"
+    },
+    {
+      "from": "vllm_hub",
+      "to": "loki_alloy",
+      "label": "pod logs",
+      "labelDy": 24
+    },
+    {
+      "from": "loki_alloy",
+      "to": "grafana",
+      "label": "Loki"
+    },
+    {
+      "from": "vllm_hub",
+      "to": "zot",
+      "label": "containerd pull",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "left",
+      "via": [[540, 64], [920, 64]]
+    },
+    {
+      "from": "grafana",
+      "to": "nfs",
+      "label": "nfs-client PVCs",
+      "variant": "dashed",
+      "labelDy": -26
+    },
+    {
+      "from": "vllm_edge",
+      "to": "huggingface",
+      "label": "model weights",
+      "variant": "dashed",
+      "labelDy": 9
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Primary inference path",
+      "items": [
+        "LAN client → Cilium L2 VIP → vLLM GPU node → response; hub 10.10.1.242 and edge 10.10.1.253 are interchangeable OpenAI backends"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Observability",
+      "items": [
+        "Grafana 10.10.1.245 queries hub Prometheus and edge Prometheus at http://10.10.1.251:9090; Alloy on hub tails pod logs into Loki"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Marked unknowns",
+      "items": [
+        "zot 10.10.1.252:5000 drawn external; hub Proxmox host IP unknown. No GitOps; apply with atmos helmfile apply"
+      ]
+    }
+  ]
+}

@@ -6,3 +6,5 @@ concurrency,ok,errors,agg_tok_per_s,ttft_p50,ttft_p99,e2e_p50,e2e_p99,wall_s,err
 16,40,0,42.6,90.11,90.433,96.13,96.42,240.63,-
 32,64,0,42.5,186.629,187.4,192.6,193.37,385.94,-
 64,72,56,21.4,54.034,205.544,58.22,205.55,861.2,ReadTimeout
+
+KNEE: saturation between concurrency 1 and 2 — throughput +0%, p99 TTFT +12955%. Past here you are queueing, not serving.

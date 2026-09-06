@@ -1,0 +1,23 @@
+{{- if .Values.dcgm.enabled }}
+# Scrape the GPU Operator's DCGM exporter (namespace gpu-operator) so Grafana's
+# GPU panels have DCGM_FI_DEV_* series.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dcgm-exporter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/part-of: monitoring
+    app.kubernetes.io/component: dcgm
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.dcgm.exporterNamespace | quote }}
+  selector:
+    matchLabels:
+      app: nvidia-dcgm-exporter
+  endpoints:
+    - port: gpu-metrics
+      interval: {{ .Values.dcgm.interval | quote }}
+      path: /metrics
+{{- end }}

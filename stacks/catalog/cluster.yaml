@@ -136,59 +136,6 @@ components:
         k8s_client_burst: 20
         gateway_api_crds_url: "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/experimental-install.yaml"
 
-    argocd:
-      metadata:
-        component: argocd
-      settings:
-        depends_on:
-          1:
-            component: cilium
-      env:
-        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
-      vars:
-        argocd_namespace: "argocd"
-        argocd_chart_version: "10.1.4"
-        # Argo CD web UI on a dedicated Cilium L2 LoadBalancer IP.
-        argocd_lb_ip: "10.10.1.244"
-        # Match the LAN NIC on any elected announcer: VMs use eth0, the bare-metal
-        # GPU node (k3s-gpu1) uses eno1. Matching only eth0 would leave the VIP dark
-        # if Cilium elected the GPU node as announcer.
-        argocd_lb_interface: "(eth0|eno1)"
-
-    # --- Kargo (Phase 4: promote the vLLM model pipeline staging -> prod) ---
-    # cert-manager is a hard Kargo prerequisite (Kargo issues its API TLS cert
-    # via a cert-manager Issuer). Both live on cluster-A (the hub) only.
-    cert-manager:
-      metadata:
-        component: cert-manager
-      settings:
-        depends_on:
-          1:
-            component: cilium
-      env:
-        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
-      vars:
-        cert_manager_namespace: "cert-manager"
-        cert_manager_chart_version: "v1.16.2"
-
-    kargo:
-      metadata:
-        component: kargo
-      settings:
-        depends_on:
-          1:
-            component: cert-manager
-          # Kargo's Argo CD integration expects Argo CD to already be running.
-          2:
-            component: argocd
-      env:
-        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
-      vars:
-        kargo_namespace: "kargo"
-        kargo_chart_version: "1.11.0"
-        # Where Argo CD lives, so Kargo can watch its Applications.
-        argocd_namespace: "argocd"
-
     gpu-operator:
       metadata:
         component: gpu-operator
@@ -208,10 +155,11 @@ components:
         # only manages the toolkit + device plugin (driver.enabled=false in the
         # helmfile). DCGM exporter ships GPU metrics for observability.
         gpu_operator_dcgm_enabled: true
-        # Time-slicing: advertise the single GPU as N logical devices so the
-        # chat LLM and the embeddings model can co-schedule on it. Shares (does
-        # not partition) VRAM, so keep the sum of model footprints under total.
-        gpu_timeslicing_enabled: true
+        # Exclusive GPU: one nvidia.com/gpu per physical card. Time-slicing
+        # used to share this node with embeddings; that workload belongs on
+        # GPU2 (homelab-2 / k3s-gpu2). Re-enable only if two GPU pods must
+        # co-schedule on k3s-gpu1 again (and drop vllm_gpu_memory_utilization).
+        gpu_timeslicing_enabled: false
         gpu_timeslicing_replicas: 4
 
     vllm:
@@ -232,9 +180,10 @@ components:
         # Drop to Qwen/Qwen2.5-1.5B-Instruct if VRAM is tight.
         vllm_model: "Qwen/Qwen2.5-3B-Instruct"
         vllm_max_model_len: 8192
-        # Leave VRAM headroom for the time-sliced embeddings model on the same
-        # GPU (time-slicing shares memory). Raise toward 0.9 if vLLM runs alone.
-        vllm_gpu_memory_utilization: "0.55"
+        # Exclusive card (timeslicing off). 0.90 leaves ~1.6 GiB for CUDA
+        # context / fragmentation. Drop toward 0.55 only if embeddings share
+        # this GPU again.
+        vllm_gpu_memory_utilization: "0.90"
         # Extra raw args for the vLLM server. These enable native OpenAI function
         # calling (tool_choice=auto) so Open WebUI's "chat with your cluster" tool
         # server works; the hermes parser matches Qwen2.5's tool-call format.
@@ -255,6 +204,44 @@ components:
         # Optional: name of a pre-created Secret with a HF_TOKEN key for gated
         # models. Leave "" for ungated models like Qwen.
         vllm_hf_token_secret: ""
+
+    # Observability stack (Prometheus + Grafana + Loki + Alloy) plus the GPU/vLLM
+    # dashboards, DCGM scrape, and LB pools. One helmfile component, four releases.
+    # Formerly the monitoring/loki/alloy/monitoring-dashboards Argo CD apps.
+    # PREREQUISITE: create the grafana-admin secret out-of-band (see the helmfile
+    # header) before the first apply.
+    monitoring:
+      metadata:
+        component: monitoring
+      settings:
+        depends_on:
+          # gpu-operator (which depends on cilium) installs the DCGM exporter the
+          # dashboards scrape; cilium provides the LoadBalancer pools.
+          1:
+            component: gpu-operator
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
+      vars:
+        monitoring_namespace: "monitoring"
+        monitoring_chart_version: "87.17.0"
+        loki_chart_version: "7.1.0"
+        alloy_chart_version: "1.10.1"
+        # The DCGM ServiceMonitor is owned by the kube-prometheus-stack release
+        # (prometheus.additionalServiceMonitors). This flag only controls the
+        # redundant copy in the monitoring-extras chart; keep it false to avoid a
+        # same-name collision on the dcgm-exporter ServiceMonitor.
+        monitoring_dcgm_enabled: false
+        # Namespace where the GPU Operator runs its DCGM exporter (scrape target).
+        monitoring_dcgm_namespace: "gpu-operator"
+        # Grafana web UI on a dedicated Cilium L2 LoadBalancer IP.
+        monitoring_grafana_lb_ip: "10.10.1.245"
+        # Shared classic-Ingress entrypoint (Prometheus ingress rides this). Must
+        # match cilium's ingress_lb_ip above.
+        monitoring_cilium_ingress_enabled: true
+        monitoring_cilium_ingress_lb_ip: "10.10.1.248"
+        # L2-announce interface regex. Match the LAN NIC on whichever node Cilium
+        # elects as announcer: VMs use eth0, the bare-metal GPU node uses eno1.
+        monitoring_lb_interface: "^(eth0|eno1)$"
 
     hubble-ui:
       metadata:
@@ -345,10 +332,10 @@ components:
         gateway_hostname: ""
         gateway_lb_ip: "10.10.1.240"
         # Only the two Gateway services live here (filament .240, hubble-ui .241).
-        # Keep this block narrow: dedicated single-IP pools own .242 (vLLM),
-        # .243 (open-webui), .244 (argocd) and .245 (grafana). Cilium flags pools
-        # whose IP ranges OVERLAP as conflicting (regardless of serviceSelector),
-        # so a wide .240-.250 block here would disable those dedicated pools.
+        # Keep this block narrow: dedicated single-IP pools own .242 (vLLM) and
+        # .245 (grafana, in the monitoring-extras chart). Cilium flags pools whose
+        # IP ranges OVERLAP as conflicting (regardless of serviceSelector), so a
+        # wide .240-.250 block here would disable those dedicated pools.
         gateway_lb_start: "10.10.1.240"
         gateway_lb_stop: "10.10.1.241"
         # Match the LAN NIC on any elected announcer: VMs use eth0, the bare-metal

@@ -1,0 +1,11 @@
+apiVersion: v2
+name: monitoring-extras
+description: >-
+  Raw monitoring add-ons that sit next to kube-prometheus-stack: GPU/vLLM Grafana
+  dashboards (sidecar-imported ConfigMaps), the DCGM exporter ServiceMonitor, and
+  the Cilium LoadBalancer pools for Grafana (.245) and the shared cilium-ingress
+  entrypoint (.248). Formerly delivered by Argo CD (gitops/monitoring-dashboards,
+  gitops/networking, model-promotion/monitoring); now installed via helmfile.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
