@@ -92,16 +92,36 @@ components:
         ANSIBLE_FORCE_COLOR: "true"
       vars:
         k3s_version: "v1.36.2+k3s1"
-        kube_vip_version: "v0.8.7"
+        # First edge server node IP (no floating VIP / kube-vip).
+        control_plane_endpoint: "10.10.1.51"
+        kube_vip_legacy_ips:
+          - "10.10.1.50"
         kube_vip_interface: "eth0"
-        # cluster-B control-plane VIP (distinct from cluster-A's 10.10.1.30).
-        control_plane_vip: "10.10.1.50"
         api_port: 6443
         pod_cidr: "10.42.0.0/16"
         service_cidr: "10.43.0.0/16"
         cluster_dns: "10.43.0.10"
         # Write cluster-B's kubeconfig to its OWN path so both clusters can be
         # managed side by side (helmfile below points KUBECONFIG here too).
+        kubeconfig_local_path: '{{ env "HOME" }}/.kube/atmos-k3s-edge.yaml'
+
+    # One-shot cleanup for leftover kube-vip on cluster-B (see prod catalog).
+    k3s-remove-kube-vip:
+      metadata:
+        component: k3s
+      settings:
+        ansible:
+          playbook: remove-kube-vip.yml
+          inventory: inventory/hosts-edge.yml
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: "false"
+        ANSIBLE_FORCE_COLOR: "true"
+      vars:
+        control_plane_endpoint: "10.10.1.51"
+        kube_vip_legacy_ips:
+          - "10.10.1.50"
+        kube_vip_interface: "eth0"
+        api_port: 6443
         kubeconfig_local_path: '{{ env "HOME" }}/.kube/atmos-k3s-edge.yaml'
 
     # See the prod catalog: narrow NFS-client install against cluster-B's nodes.
@@ -141,7 +161,7 @@ components:
         KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s-edge.yaml'
       vars:
         cilium_chart_version: "1.16.5"
-        control_plane_vip: "10.10.1.50"
+        control_plane_endpoint: "10.10.1.51"
         api_port: 6443
         pod_cidr: "10.42.0.0/16"
         # No Gateway API on cluster-B (no north-south ingress needed), but keep

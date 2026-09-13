@@ -1,54 +1,7 @@
 ---
-# HA k3s install on Proxmox VMs.
-#
-# Order matters:
-#   1. Common OS prep on every node.
-#   2. Bootstrap the first server with --cluster-init (no floating VIP /
-#      kube-vip — joiners and kubeconfig use the first server's node IP).
-#   3. Join the remaining servers (serially) via the first server.
-#   4. Join the agents via the first server.
-#   5. Remove any leftover kube-vip auto-deploy from older installs.
-#   6. Fetch a kubeconfig pointed at the first server for Helmfile/kubectl.
+# Narrow cleanup: remove leftover kube-vip and rewrite kubeconfig to the
+# first-server API endpoint. Does not reinstall or rejoin k3s.
 
-- name: Common OS preparation
-  hosts: k3s_cluster
-  become: true
-  roles:
-    - common
-
-# Bare-metal GPU host bring-up (driver assert + nvidia-container-toolkit). Runs
-# before the agent join below so k3s auto-detects the `nvidia` runtime on its
-# first start. Only targets the k3s_gpu group, so it is a no-op for VM nodes.
-- name: GPU host preparation
-  hosts: k3s_gpu
-  become: true
-  roles:
-    - gpu
-
-- name: Bootstrap first k3s server (cluster-init)
-  hosts: k3s_servers[0]
-  become: true
-  roles:
-    - role: k3s-server
-      vars:
-        k3s_cluster_init: true
-
-- name: Join remaining k3s servers
-  hosts: k3s_servers[1:]
-  become: true
-  serial: 1
-  roles:
-    - role: k3s-server
-      vars:
-        k3s_cluster_init: false
-
-- name: Join k3s agents
-  hosts: k3s_agents
-  become: true
-  roles:
-    - k3s-agent
-
-# Idempotent cleanup for clusters that previously staged kube-vip.
 - name: Remove kube-vip if previously installed
   hosts: k3s_servers
   become: true

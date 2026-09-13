@@ -1,7 +1,7 @@
 ---
-- name: Wait for the control-plane VIP API to be reachable
+- name: Wait for the control-plane API to be reachable
   ansible.builtin.wait_for:
-    host: "{{ control_plane_vip }}"
+    host: "{{ control_plane_endpoint }}"
     port: "{{ api_port }}"
     timeout: 300
 

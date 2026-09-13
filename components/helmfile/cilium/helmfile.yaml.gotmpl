@@ -28,7 +28,7 @@ releases:
     {{- end }}
     values:
       - kubeProxyReplacement: true
-        k8sServiceHost: {{ .Values.control_plane_vip | default "10.10.1.30" | quote }}
+        k8sServiceHost: {{ .Values.control_plane_endpoint | default "10.10.1.31" | quote }}
         k8sServicePort: {{ .Values.api_port | default 6443 }}
 
         # k3s allocates per-node podCIDRs from --cluster-cidr, so use the

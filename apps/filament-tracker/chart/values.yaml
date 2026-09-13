@@ -51,7 +51,7 @@ loadBalancer:
   stop: "10.10.1.250"
   # Requested IP for the Gateway service (must fall within the pool).
   ip: "10.10.1.240"
-  # Interface Cilium announces the L2 IP on (matches kube_vip_interface).
+  # Interface Cilium announces the L2 IP on (LAN bridge, typically eth0).
   interface: "eth0"
 
 networkPolicy:

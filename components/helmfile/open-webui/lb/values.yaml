@@ -1,0 +1,5 @@
+loadBalancer:
+  poolName: open-webui-lb-pool
+  ip: "10.10.1.246"
+  # Unanchored NIC regex; the template wraps it as ^...$
+  interface: "(eth0|eno1)"

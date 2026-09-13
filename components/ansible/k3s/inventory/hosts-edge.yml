@@ -5,7 +5,7 @@
 # agents, CPU-only (no GPU node — only one GPU exists, and it's in cluster-A).
 #
 # IPs here must match the `edge` overrides in stacks/catalog/cluster-edge.yaml
-# (VIP 10.10.1.50, servers .51/.52/.53, agents .54/.55/.56). site.yml drives
+# (API endpoint 10.10.1.51, servers .51/.52/.53, agents .54/.55/.56). site.yml drives
 # play targeting off these groups.
 all:
   vars:

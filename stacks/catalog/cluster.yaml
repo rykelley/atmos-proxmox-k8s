@@ -72,13 +72,36 @@ components:
         ANSIBLE_FORCE_COLOR: "true"
       vars:
         k3s_version: "v1.36.2+k3s1"
-        kube_vip_version: "v0.8.7"
+        # First server node IP (no floating VIP / kube-vip).
+        control_plane_endpoint: "10.10.1.31"
+        # Legacy kube-vip address to strip from eth0 if still present.
+        kube_vip_legacy_ips:
+          - "10.10.1.30"
         kube_vip_interface: "eth0"
-        control_plane_vip: "10.10.1.30"
         api_port: 6443
         pod_cidr: "10.42.0.0/16"
         service_cidr: "10.43.0.0/16"
         cluster_dns: "10.43.0.10"
+
+    # One-shot cleanup for clusters that still have kube-vip staged. Removes the
+    # DaemonSet/RBAC/manifest + leftover /32 VIP, then rewrites kubeconfig to
+    # the first-server endpoint. Not part of deploy-cluster.
+    k3s-remove-kube-vip:
+      metadata:
+        component: k3s
+      settings:
+        ansible:
+          playbook: remove-kube-vip.yml
+          inventory: inventory/hosts.yml
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: "false"
+        ANSIBLE_FORCE_COLOR: "true"
+      vars:
+        control_plane_endpoint: "10.10.1.31"
+        kube_vip_legacy_ips:
+          - "10.10.1.30"
+        kube_vip_interface: "eth0"
+        api_port: 6443
 
     # Same component dir as `k3s`, different playbook: installs nfs-common on
     # every node without running the rest of the site play. Not part of
@@ -121,7 +144,7 @@ components:
         KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
       vars:
         cilium_chart_version: "1.16.5"
-        control_plane_vip: "10.10.1.30"
+        control_plane_endpoint: "10.10.1.31"
         api_port: 6443
         pod_cidr: "10.42.0.0/16"
         # North-south ingress + bare-metal LoadBalancer for the filament app.
@@ -201,9 +224,44 @@ components:
         vllm_lb_interface: "(eth0|eno1)"
         # Persist the HuggingFace model cache across pod restarts (0 = emptyDir).
         vllm_model_cache_size: "30Gi"
+        # Optional StorageClass for the model-cache PVC. Empty = cluster default
+        # (k3s local-path). Edge pins local-path explicitly.
+        vllm_model_cache_storage_class: ""
         # Optional: name of a pre-created Secret with a HF_TOKEN key for gated
         # models. Leave "" for ungated models like Qwen.
         vllm_hf_token_secret: ""
+
+    # Open WebUI chat frontend (CPU-only). Talks to hub vLLM in-cluster and
+    # edge vLLM over the LAN VIP so both Blackwells show up as OpenAI models.
+    # Applied with `atmos helmfile apply open-webui -s prod`.
+    open-webui:
+      metadata:
+        component: open-webui
+      settings:
+        depends_on:
+          1:
+            component: vllm
+          2:
+            component: nfs-provisioner
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
+      vars:
+        openwebui_namespace: "open-webui"
+        openwebui_chart_version: "16.5.0"
+        openwebui_image_tag: "v0.11.3"
+        openwebui_name: "Homelab GPU"
+        openwebui_default_model: "Qwen/Qwen2.5-3B-Instruct"
+        # Hub: in-cluster Service (avoids Cilium LB hairpin). Edge: LAN VIP on
+        # homelab-2. Dummy API keys are required by the chart; vLLM ignores them.
+        openwebui_openai_urls:
+          - "http://vllm.vllm.svc.cluster.local:8000/v1"
+          - "http://10.10.1.253:8000/v1"
+        openwebui_pvc_size: "5Gi"
+        openwebui_storage_class: "nfs-client"
+        # Dedicated Cilium L2 VIP. Ping-check before changing — an IP that
+        # already answers ARP silently breaks assignment (same rule as Grafana).
+        openwebui_lb_ip: "10.10.1.246"
+        openwebui_lb_interface: "(eth0|eno1)"
 
     # Observability stack (Prometheus + Grafana + Loki + Alloy) plus the GPU/vLLM
     # dashboards, DCGM scrape, and LB pools. One helmfile component, four releases.

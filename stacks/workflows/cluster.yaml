@@ -5,7 +5,7 @@
 
 workflows:
   deploy-cluster:
-    description: "Provision VMs, install HA k3s + kube-vip, then deploy Cilium and Kyverno."
+    description: "Provision VMs, install HA k3s (API on first server IP), then deploy Cilium and Kyverno."
     steps:
       - name: provision-vms
         command: terraform apply proxmox-vms -s prod -auto-approve
@@ -25,7 +25,7 @@ workflows:
         # the kyverno-policies diff fails with "no matches for kind ClusterPolicy".
         command: helmfile apply kyverno -s prod -- --skip-diff-on-install
       - name: deploy-filament-app
-        # Requires the `filament` namespace and `filament-db` Secret to exist
+        # Requires the `filament-db` Secret to exist (namespace is created by Helm).
         # (see README). --skip-diff-on-install avoids diffing Cilium/Gateway CRs
         # whose CRDs were installed by earlier steps.
         command: helmfile apply filament-app -s prod -- --skip-diff-on-install
@@ -38,8 +38,8 @@ workflows:
     description: "Bare-metal GPU host bring-up via Ansible only (no Terraform): common OS prep, passwordless sudo, NVIDIA driver check, nvidia-container-toolkit, then join k3s. Scoped to the k3s_gpu group."
     steps:
       # --limit k3s_gpu scopes every play to the GPU node: Common OS prep, the
-      # GPU host role, and the agent join all run; the server/kube-vip/kubeconfig
-      # plays have no hosts under the limit and are skipped. This is the ansible
+      # GPU host role, and the agent join all run; the server/kubeconfig plays
+      # have no hosts under the limit and are skipped. This is the ansible
       # analogue of `deploy-cluster` (which uses Terraform to build the VM OS).
       #
       # First-time bring-up on a host without passwordless sudo: append
@@ -61,6 +61,12 @@ workflows:
       - name: deploy-vllm
         command: helmfile apply vllm -s prod -- --skip-diff-on-install
 
+  deploy-open-webui:
+    description: "Deploy Open WebUI on the hub cluster, backed by hub + edge vLLM (Blackwell GPUs). Requires vLLM and nfs-client already up."
+    steps:
+      - name: deploy-open-webui
+        command: helmfile apply open-webui -s prod -- --skip-diff-on-install
+
   deploy-monitoring:
     description: "Deploy the observability stack (Prometheus + Grafana + Loki + Alloy) plus the GPU/vLLM dashboards, DCGM scrape, and Grafana/cilium-ingress LB pools. Requires the grafana-admin Secret (see components/helmfile/monitoring/helmfile.yaml.gotmpl) and the GPU Operator (DCGM exporter) already up."
     steps:
@@ -75,6 +81,9 @@ workflows:
     steps:
       - name: destroy-monitoring
         command: helmfile destroy monitoring -s prod
+        # Best-effort: the cluster may already be gone.
+      - name: destroy-open-webui
+        command: helmfile destroy open-webui -s prod
         # Best-effort: the cluster may already be gone.
       - name: destroy-vllm
         command: helmfile destroy vllm -s prod
@@ -96,7 +105,7 @@ workflows:
         command: terraform destroy proxmox-vms -s prod -auto-approve
 
   deploy-app:
-    description: "Deploy/redeploy just the filament tracker app (namespace + filament-db secret must exist)."
+    description: "Deploy/redeploy just the filament tracker app (filament-db secret must exist)."
     steps:
       - name: deploy-filament-app
         command: helmfile apply filament-app -s prod -- --skip-diff-on-install
@@ -108,7 +117,7 @@ workflows:
         command: terraform plan proxmox-vms -s prod
 
   deploy-cluster-b:
-    description: "Provision cluster-B (edge) on the standalone Proxmox host pve2 (10.10.1.82): 3-server HA k3s + kube-vip (VIP 10.10.1.50), then Cilium. CPU-only control plane (its GPU node runs vLLM separately). Requires PROXMOX_VE_B_* in .env and the ubuntu-2404-cloudinit template on pve2 (see scripts/create-ubuntu-template.sh)."
+    description: "Provision cluster-B (edge) on the standalone Proxmox host pve2 (10.10.1.82): 3-server HA k3s (API on first server 10.10.1.51), then Cilium. CPU-only control plane (its GPU node runs vLLM separately). Requires PROXMOX_VE_B_* in .env and the ubuntu-2404-cloudinit template on pve2 (see scripts/create-ubuntu-template.sh)."
     steps:
       - name: provision-vms
         command: terraform apply proxmox-vms -s edge -auto-approve

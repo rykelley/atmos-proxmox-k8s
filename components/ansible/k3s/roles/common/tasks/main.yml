@@ -68,3 +68,30 @@
     - { name: "net.ipv6.conf.all.forwarding", value: "1" }
     - { name: "fs.inotify.max_user_instances", value: "8192" }
     - { name: "fs.inotify.max_user_watches", value: "524288" }
+
+# Explicitly disable unattended auto-reboot. The stock Ubuntu file leaves
+# Automatic-Reboot commented (defaults false), but a drift to "true" would
+# reboot every control-plane node after a kernel upgrade and drop the VIP.
+# Today's outage was hypervisor-initiated, but this still closes that footgun.
+- name: Pin unattended-upgrades to never auto-reboot
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/52k3s-no-auto-reboot
+    mode: "0644"
+    content: |
+      // Managed by Ansible (Atmos). Do not auto-reboot after upgrades.
+      // Kernel installs are fine; schedule reboots deliberately, one node at a time.
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
+
+# needrestart's Ubuntu APT hook defaults to auto-restarting services. Keep
+# that for userspace daemons, but never let it trigger a host reboot for a
+# pending kernel — that is an operator decision on HA etcd nodes.
+- name: Prefer listing pending kernel reboots over auto-rebooting
+  ansible.builtin.copy:
+    dest: /etc/needrestart/conf.d/99-k3s-no-kernel-reboot.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (Atmos).
+      # 'i' = interactive/list for kernel; services still follow Ubuntu APT defaults.
+      $nrconf{kernelhints} = -1;
+      $nrconf{ucodehints} = 0;

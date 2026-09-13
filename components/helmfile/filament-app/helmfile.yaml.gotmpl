@@ -3,14 +3,15 @@
 # locked down with CiliumNetworkPolicies. Atmos passes stack `vars` as
 # Helmfile state values (.Values.*) and sets KUBECONFIG via the component env.
 #
-# Prerequisite: the target namespace and the `filament-db` Secret (containing
-# DATABASE_URL for Supabase) must already exist. See the README.
+# Prerequisite: the `filament-db` Secret (containing DATABASE_URL for Supabase)
+# must already exist in the target namespace. See the README. The namespace
+# itself is created by Helm on first install.
 
 releases:
   - name: filament-app
     namespace: {{ .Values.filament_namespace | default "filament" }}
     chart: ../../../apps/filament-tracker/chart
-    createNamespace: false
+    createNamespace: true
     wait: true
     timeout: 600
     values:

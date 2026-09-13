@@ -1,17 +1,52 @@
 ---
-# Stage the kube-vip control-plane manifest into the k3s auto-deploy directory.
-# k3s applies every manifest in /var/lib/rancher/k3s/server/manifests once the
-# API server is up. kube-vip runs with hostNetwork, so it brings up the VIP
-# without requiring a CNI to be installed first.
+# Remove kube-vip if a previous install staged it into k3s auto-deploy.
+# k3s does not garbage-collect resources when a manifests/*.yaml file is deleted,
+# so we also delete the DaemonSet + RBAC when the local API is up.
 
-- name: Ensure k3s server manifests directory exists
+- name: Remove kube-vip auto-deploy manifest
   ansible.builtin.file:
-    path: /var/lib/rancher/k3s/server/manifests
-    state: directory
-    mode: "0755"
+    path: /var/lib/rancher/k3s/server/manifests/kube-vip.yaml
+    state: absent
 
-- name: Render kube-vip RBAC + DaemonSet manifest
-  ansible.builtin.template:
-    src: kube-vip.yaml.j2
-    dest: /var/lib/rancher/k3s/server/manifests/kube-vip.yaml
-    mode: "0600"
+- name: Check whether the local k3s API is up
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ api_port }}"
+    timeout: 5
+  register: _local_api
+  failed_when: false
+  changed_when: false
+
+- name: Delete kube-vip Kubernetes objects
+  ansible.builtin.command:
+    cmd: >
+      kubectl --server https://127.0.0.1:{{ api_port }}
+      --insecure-skip-tls-verify
+      --kubeconfig /etc/rancher/k3s/k3s.yaml
+      {{ item }}
+  loop:
+    - delete daemonset kube-vip-ds -n kube-system --ignore-not-found
+    - delete serviceaccount kube-vip -n kube-system --ignore-not-found
+    - delete clusterrole system:kube-vip-role --ignore-not-found
+    - delete clusterrolebinding system:kube-vip-binding --ignore-not-found
+    - delete lease plndr-cp-lock -n kube-system --ignore-not-found
+  when: _local_api is succeeded
+  changed_when: "'deleted' in (stdout | default(''))"
+  failed_when: false
+
+- name: Drop leftover kube-vip /32 addresses (never touch the node /24)
+  ansible.builtin.shell:
+    cmd: |
+      set -e
+      iface="{{ kube_vip_interface | default('eth0') }}"
+      ip="{{ item }}"
+      if ip -4 addr show dev "$iface" | grep -q " ${ip}/32"; then
+        ip addr del "${ip}/32" dev "$iface"
+        echo removed
+      else
+        echo absent
+      fi
+  loop: "{{ kube_vip_legacy_ips | default([]) }}"
+  register: _vip_addr
+  changed_when: "'removed' in _vip_addr.stdout"
+  failed_when: false

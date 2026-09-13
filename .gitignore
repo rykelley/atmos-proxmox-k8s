@@ -18,6 +18,7 @@ terraform.rc
 **/*.planfile
 **/varfile
 **/*.terraform.tfvars.json
+**/*.helmfile.vars.yaml
 
 # Ansible
 *.retry

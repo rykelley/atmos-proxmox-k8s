@@ -1,0 +1,115 @@
+# Open WebUI chat frontend on the hub cluster, backed by the existing vLLM
+# OpenAI-compatible servers on the Blackwell GPUs. The UI itself is CPU-only
+# (no GPU request, no GPU taint toleration) so it schedules on the k3s VMs;
+# inference stays on k3s-gpu1 / k3s-gpu2 via vLLM.
+#
+# Hub vLLM is reached in-cluster. Edge vLLM is reached across the LAN VIP
+# because it lives on a different cluster.
+#
+# Atmos passes stack `vars` as Helmfile state values (.Values.*) and sets
+# KUBECONFIG via the component env. Use `dig` (not `.Values.foo | default`)
+# so an omitted stack var does not fail template parse.
+
+repositories:
+  - name: open-webui
+    url: https://helm.openwebui.com/
+
+{{- $ns := dig "openwebui_namespace" "open-webui" .Values }}
+{{- $lbIP := dig "openwebui_lb_ip" "10.10.1.246" .Values }}
+{{- $model := dig "openwebui_default_model" "Qwen/Qwen2.5-3B-Instruct" .Values }}
+{{- $urls := dig "openwebui_openai_urls" (list "http://vllm.vllm.svc.cluster.local:8000/v1" "http://10.10.1.253:8000/v1") .Values }}
+
+releases:
+  - name: open-webui-lb
+    namespace: {{ $ns }}
+    chart: ./lb
+    createNamespace: true
+    wait: true
+    timeout: 120
+    values:
+      - loadBalancer:
+          poolName: open-webui-lb-pool
+          ip: {{ $lbIP | quote }}
+          interface: {{ dig "openwebui_lb_interface" "(eth0|eno1)" .Values | quote }}
+
+  - name: open-webui
+    namespace: {{ $ns }}
+    chart: open-webui/open-webui
+    version: {{ dig "openwebui_chart_version" "16.5.0" .Values | quote }}
+    createNamespace: true
+    wait: true
+    timeout: 600
+    needs:
+      - {{ $ns }}/open-webui-lb
+    # Persist WEBUI_SECRET_KEY across restarts so login sessions survive a
+    # rollout. Created once; later applies leave an existing secret alone.
+    hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: sh
+        args:
+          - -c
+          - |
+            kubectl create namespace {{ $ns }} --dry-run=client -o yaml | kubectl apply -f -
+            if ! kubectl -n {{ $ns }} get secret open-webui-secrets >/dev/null 2>&1; then
+              kubectl -n {{ $ns }} create secret generic open-webui-secrets \
+                --from-literal=webui-secret-key="$(openssl rand -hex 32)"
+            fi
+    values:
+      - fullnameOverride: open-webui
+        replicaCount: 1
+        image:
+          repository: ghcr.io/open-webui/open-webui
+          tag: {{ dig "openwebui_image_tag" "v0.11.3" .Values | quote }}
+          pullPolicy: IfNotPresent
+        ollama:
+          enabled: false
+        pipelines:
+          enabled: false
+        tika:
+          enabled: false
+        websocket:
+          enabled: true
+          manager: redis
+          redis:
+            enabled: true
+        persistence:
+          enabled: true
+          size: {{ dig "openwebui_pvc_size" "5Gi" .Values | quote }}
+          storageClass: {{ dig "openwebui_storage_class" "nfs-client" .Values | quote }}
+          accessModes:
+            - ReadWriteOnce
+        resources:
+          requests:
+            cpu: {{ dig "openwebui_cpu_request" "250m" .Values | quote }}
+            memory: {{ dig "openwebui_memory_request" "512Mi" .Values | quote }}
+          limits:
+            cpu: {{ dig "openwebui_cpu_limit" "1" .Values | quote }}
+            memory: {{ dig "openwebui_memory_limit" "1Gi" .Values | quote }}
+        service:
+          type: LoadBalancer
+          port: 80
+          containerPort: 8080
+          labels:
+            app.kubernetes.io/name: open-webui
+          annotations:
+            io.cilium/lb-ipam-ips: {{ $lbIP | quote }}
+        enableOpenaiApi: true
+        openaiBaseApiUrls:
+          {{- range $urls }}
+          - {{ . | quote }}
+          {{- end }}
+        openaiApiKeys:
+          {{- range $urls }}
+          - "sk-vllm"
+          {{- end }}
+        extraEnvVars:
+          - name: DEFAULT_MODELS
+            value: {{ $model | quote }}
+          - name: WEBUI_NAME
+            value: {{ dig "openwebui_name" "Homelab GPU" .Values | quote }}
+          - name: WEBUI_SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: open-webui-secrets
+                key: webui-secret-key

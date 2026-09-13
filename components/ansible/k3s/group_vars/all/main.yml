@@ -3,15 +3,16 @@
 
 # Versions
 k3s_version: "v1.36.2+k3s1"
-kube_vip_version: "v0.8.7"
 
-# HA control-plane VIP
-control_plane_vip: "10.10.1.30"
+# API endpoint for joins / kubeconfig / Cilium. This is the first server's node
+# IP (not a floating VIP — kube-vip is not used).
+control_plane_endpoint: "10.10.1.31"
 api_port: 6443
 
-# Network interface kube-vip advertises the VIP on (Proxmox virtio NIC on
-# Ubuntu cloud images is typically ens18).
-kube_vip_interface: "ens18"
+# Interface + former floating VIP(s) for cleanup of leftover kube-vip /32s.
+kube_vip_interface: "eth0"
+kube_vip_legacy_ips:
+  - "10.10.1.30"
 
 # Kubernetes networking (Cilium owns CNI; flannel/kube-proxy disabled)
 pod_cidr: "10.42.0.0/16"

@@ -34,8 +34,10 @@ releases:
             {{- end }}
         modelCache:
           size: {{ .Values.vllm_model_cache_size | default "30Gi" | quote }}
-          {{- with .Values.vllm_model_cache_storage_class }}
+          {{- if hasKey .Values "vllm_model_cache_storage_class" }}
+          {{- with index .Values "vllm_model_cache_storage_class" }}
           storageClassName: {{ . | quote }}
+          {{- end }}
           {{- end }}
         hfTokenSecret: {{ .Values.vllm_hf_token_secret | default "" | quote }}
         loadBalancer:

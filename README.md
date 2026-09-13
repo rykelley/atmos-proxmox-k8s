@@ -6,7 +6,7 @@ A complete, [Atmos](https://atmos.tools/)-driven workflow that stands up a
 | Layer | Tool | What it does |
 | --- | --- | --- |
 | Infrastructure | **OpenTofu** (`bpg/proxmox`) | Clones 6 Ubuntu 24.04 VMs from a cloud-init template |
-| Configuration | **Ansible** | OS prep, HA k3s install, `kube-vip` control-plane VIP |
+| Configuration | **Ansible** | OS prep, HA k3s install (API on first server IP) |
 | Add-ons | **Helmfile** | **Cilium** (CNI, kube-proxy replacement, Gateway API, L2 LB) + **Kyverno** (policy) |
 | GPU | **Helmfile** | **NVIDIA GPU Operator** (exclusive card) on a bare-metal Blackwell node + **vLLM** OpenAI-compatible LLM serving |
 | Observability | **Helmfile** | **kube-prometheus-stack** + **Loki** + **Grafana Alloy**, with GPU/vLLM dashboards and the DCGM scrape (the `monitoring` component) |
@@ -16,11 +16,11 @@ A complete, [Atmos](https://atmos.tools/)-driven workflow that stands up a
 ## Topology
 
 ```
-                 kube-vip control-plane VIP: 10.10.1.30  (bridged on vmbr0 / 10.10.1.0/24, gw 10.10.1.1)
+                 API endpoint (first server): 10.10.1.31  (bridged on vmbr0 / 10.10.1.0/24, gw 10.10.1.1)
                  ┌──────────────────────────────────────────────┐
   servers (HA    │  k3s-server-1  10.10.1.31  (--cluster-init)   │
-  embedded etcd) │  k3s-server-2  10.10.1.32  (joins via VIP)    │
-                 │  k3s-server-3  10.10.1.33  (joins via VIP)    │
+  embedded etcd) │  k3s-server-2  10.10.1.32  (joins via .31)    │
+                 │  k3s-server-3  10.10.1.33  (joins via .31)    │
                  └──────────────────────────────────────────────┘
   agents         ┌──────────────────────────────────────────────┐
   (workers)      │  k3s-agent-1   10.10.1.34                     │
@@ -74,13 +74,14 @@ A complete, [Atmos](https://atmos.tools/)-driven workflow that stands up a
 atmos.yaml                        # Atmos root config (terraform/ansible/helmfile + stacks + workflows)
 components/
   terraform/proxmox-vms/          # bpg/proxmox VM clones
-  ansible/k3s/                    # site.yml, inventory, group_vars, roles (common, kube-vip, k3s-server, k3s-agent, gpu)
+  ansible/k3s/                    # site.yml, inventory, group_vars, roles (common, kube-vip cleanup, k3s-server, k3s-agent, gpu)
   helmfile/cilium/                # Cilium CNI (+ Gateway API, L2 LB)
   helmfile/kyverno/               # Kyverno policy engine + starter + filament policies
   helmfile/filament-app/          # Filament Tracker app (local Helm chart)
   helmfile/hubble-ui/             # Exposes Hubble UI on the LAN (local Helm chart)
   helmfile/gpu-operator/          # NVIDIA GPU Operator (device plugin + GFD + DCGM; toolkit off)
   helmfile/vllm/                  # vLLM OpenAI-compatible server (local Helm chart)
+  helmfile/open-webui/            # Open WebUI chat UI (official chart + Cilium L2 VIP)
   helmfile/monitoring/            # kube-prometheus-stack + Loki + Alloy + monitoring-extras (4 releases)
 apps/
   filament-tracker/               # app source: services/, web/, chart/
@@ -88,7 +89,7 @@ apps/
   vllm/                           # vLLM Helm chart (Deployment + LB Service + Cilium LB pool)
   monitoring-extras/              # local chart: GPU/vLLM Grafana dashboards, DCGM ServiceMonitor, grafana + cilium-ingress LB pools
 stacks/
-  catalog/cluster.yaml            # single source of truth (nodes, VIP, CIDRs, Proxmox params)
+  catalog/cluster.yaml            # single source of truth (nodes, API endpoint, CIDRs, Proxmox params)
   deploy/prod/cluster.yaml        # prod stack wiring all components
   workflows/cluster.yaml          # deploy-cluster / setup-gpu-os / deploy-gpu / deploy-monitoring / deploy-app / destroy-cluster
 .github/workflows/build-images.yml # build + push the 3 images to GHCR
@@ -108,7 +109,7 @@ Or step by step:
 # 1. Create the VMs
 atmos terraform apply proxmox-vms -s prod
 
-# 2. Install HA k3s + kube-vip
+# 2. Install HA k3s (API on first server IP)
 atmos ansible playbook k3s -s prod
 
 # 3. Networking + policy
@@ -116,7 +117,7 @@ atmos helmfile apply cilium -s prod
 atmos helmfile apply kyverno -s prod
 ```
 
-After Ansible runs, a kubeconfig pointing at the VIP is written to
+After Ansible runs, a kubeconfig pointing at the first server is written to
 `components/ansible/k3s/fetched/kubeconfig`. Point `kubectl`/`helmfile` at it:
 
 ```bash
@@ -216,8 +217,8 @@ Grab the **connection pooler** URL from your Supabase project
 (Project Settings -> Database -> Connection pooling, port 6543):
 
 ```bash
-export KUBECONFIG=$PWD/components/ansible/k3s/fetched/kubeconfig
-kubectl create namespace filament
+export KUBECONFIG=${KUBECONFIG:-$HOME/.kube/atmos-k3s.yaml}
+kubectl create namespace filament 2>/dev/null || true
 kubectl -n filament create secret generic filament-db \
   --from-literal=DATABASE_URL='postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres'
 ```
@@ -334,7 +335,7 @@ atmos workflow setup-gpu-os -f cluster
 ```
 
 This maps to `atmos ansible playbook k3s -s prod -- --limit k3s_gpu` (the
-server / kube-vip / kubeconfig-fetch plays are skipped by the limit). The
+server / kubeconfig-fetch plays are skipped by the limit). The
 GPU-host tasks live in the `gpu` role
 ([`components/ansible/k3s/roles/gpu`](components/ansible/k3s/roles/gpu)) and run
 before the agent join so the toolkit is present when k3s first starts.
@@ -405,6 +406,36 @@ smaller card drop `vllm_model` to `Qwen/Qwen2.5-1.5B-Instruct`. For gated models
 create a Secret with an `HF_TOKEN` key in the `vllm` namespace and set
 `vllm_hf_token_secret` to its name.
 
+## Open WebUI (chat UI on the GPUs)
+
+[Open WebUI](https://openwebui.com/) is a CPU-only frontend on the hub cluster.
+It does **not** request a GPU; inference stays on the exclusive Blackwell cards
+via the existing vLLM servers (hub in-cluster, edge over LAN VIP `10.10.1.253`).
+
+Prerequisite: vLLM on `-s prod` (and optionally `-s edge`) plus `nfs-client`.
+
+```bash
+atmos workflow deploy-open-webui -f cluster
+# or
+atmos helmfile apply open-webui -s prod -- --skip-diff-on-install
+```
+
+Browse to **`http://10.10.1.246`**. The first account you create is the admin.
+Both GPU backends should appear as OpenAI-compatible models
+(`Qwen/Qwen2.5-3B-Instruct`). Chat to either; vLLM on `k3s-gpu1` / `k3s-gpu2`
+does the work.
+
+| Service | LB IP | Role |
+| --- | --- | --- |
+| Open WebUI | `10.10.1.246` | Chat UI (CPU, nfs-client PVC) |
+| vLLM hub | `10.10.1.242` | OpenAI API on k3s-gpu1 |
+| vLLM edge | `10.10.1.253` | OpenAI API on k3s-gpu2 |
+
+Ping-check `.246` before changing `openwebui_lb_ip` — Cilium will not steal an
+address that already answers ARP. Drop the edge URL from `openwebui_openai_urls`
+in [`stacks/catalog/cluster.yaml`](stacks/catalog/cluster.yaml) if homelab-2
+vLLM is down.
+
 ## Monitoring (Prometheus + Grafana + Loki)
 
 Cluster + GPU observability, deployed as a single helmfile component
@@ -420,6 +451,7 @@ Components:
 | Grafana | `10.10.1.245` | GPU + vLLM dashboards (NVIDIA DCGM), logs (Loki) |
 | Prometheus | `10.10.1.248` (ingress) | Metrics store / query, via the shared cilium-ingress entrypoint |
 | vLLM | `10.10.1.242` | OpenAI-compatible chat completions (scraped for metrics) |
+| Open WebUI | `10.10.1.246` | Chat UI in front of hub + edge vLLM |
 | Loki | in-cluster | Log storage + query engine (filesystem-backed) |
 | Grafana Alloy | in-cluster (DaemonSet) | Ships every pod's logs to Loki |
 
@@ -563,6 +595,20 @@ atmos helmfile apply monitoring -s prod
 ```
 
 ## Troubleshooting
+
+- **API endpoint returns `no route to host` / Helmfile cannot reach
+  `https://10.10.1.31:6443` (or edge `.51`):** usually the first server VM is
+  down (Proxmox/hypervisor reboot — auth.log shows `hypervisor initiated
+  shutdown`). Without a floating VIP, kubectl/join traffic depends on
+  `k3s-server-1` / `edge-server-1` being up. Confirm with
+  `kubectl get --raw=/readyz` once that node is back. Re-run Ansible to refresh
+  configs/kubeconfig if needed:
+
+  ```bash
+  set -a; . ./.env; set +a
+  atmos ansible playbook k3s -s prod
+  # edge: atmos ansible playbook k3s -s edge
+  ```
 
 - **`GatewayClass`/`Gateway` stuck `Unknown`/`Pending`, or no LB IP gets
   announced (empty `l2-announce` state, no `cilium-l2announce-*` lease):**
