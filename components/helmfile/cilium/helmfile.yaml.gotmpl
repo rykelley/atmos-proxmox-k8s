@@ -1,20 +1,25 @@
 # Cilium CNI for k3s with full kube-proxy replacement.
 # Atmos passes stack `vars` as Helmfile state values (.Values.*) and sets
-# KUBECONFIG via the component `env`.
+# KUBECONFIG via the component `env`. Use `dig` for optional keys so stacks
+# that omit a var (e.g. edge) do not fail template parse.
 
 repositories:
   - name: cilium
     url: https://helm.cilium.io/
 
+{{- $enableGateway := dig "enable_gateway_api" true .Values }}
+{{- $enableIngress := dig "enable_ingress_controller" false .Values }}
+{{- $enableL2 := dig "enable_l2_announcements" true .Values }}
+
 releases:
   - name: cilium
     namespace: kube-system
     chart: cilium/cilium
-    version: {{ .Values.cilium_chart_version | default "1.16.5" | quote }}
+    version: {{ dig "cilium_chart_version" "1.16.5" .Values | quote }}
     wait: true
     waitForJobs: true
     timeout: 600
-    {{- if .Values.enable_gateway_api | default true }}
+    {{- if $enableGateway }}
     # Gateway API CRDs must exist before the cilium agent enables the Gateway
     # API feature. Applied idempotently before each cilium sync.
     hooks:
@@ -24,12 +29,12 @@ releases:
         args:
           - apply
           - -f
-          - {{ .Values.gateway_api_crds_url | default "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/experimental-install.yaml" | quote }}
+          - {{ dig "gateway_api_crds_url" "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/experimental-install.yaml" .Values | quote }}
     {{- end }}
     values:
       - kubeProxyReplacement: true
-        k8sServiceHost: {{ .Values.control_plane_endpoint | default "10.10.1.31" | quote }}
-        k8sServicePort: {{ .Values.api_port | default 6443 }}
+        k8sServiceHost: {{ dig "control_plane_endpoint" "10.10.1.31" .Values | quote }}
+        k8sServicePort: {{ dig "api_port" 6443 .Values }}
 
         # k3s allocates per-node podCIDRs from --cluster-cidr, so use the
         # Kubernetes IPAM mode which honors those allocations.
@@ -69,7 +74,7 @@ releases:
 
         # --- Gateway API (north-south ingress for the filament app) ---
         gatewayAPI:
-          enabled: {{ .Values.enable_gateway_api | default true }}
+          enabled: {{ $enableGateway }}
 
         # --- Ingress controller (standard networking.k8s.io/v1 Ingress) ---
         # Cilium can serve BOTH Gateway API (above) and classic Ingress via the
@@ -78,7 +83,7 @@ releases:
         # `cilium-ingress` LoadBalancer Service (kube-system) pinned to a reserved
         # LAN IP, so future apps just add an Ingress (host/path) with no new IP.
         ingressController:
-          enabled: {{ .Values.enable_ingress_controller | default false }}
+          enabled: {{ $enableIngress }}
           # Handle Ingress resources that don't set an ingressClassName.
           default: true
           loadbalancerMode: shared
@@ -89,15 +94,15 @@ releases:
             # cilium-ingress Service (pool/L2 policy in the monitoring-extras
             # chart: apps/monitoring-extras/chart/templates/loadbalancer.yaml).
             annotations:
-              io.cilium/lb-ipam-ips: {{ .Values.ingress_lb_ip | default "10.10.1.248" | quote }}
+              io.cilium/lb-ipam-ips: {{ dig "ingress_lb_ip" "10.10.1.248" .Values | quote }}
 
         # --- L2 LoadBalancer for bare-metal (no servicelb) ---
         # LB IPs are allocated by CiliumLoadBalancerIPPool and advertised via
         # CiliumL2AnnouncementPolicy (both shipped with the filament-app chart).
         l2announcements:
-          enabled: {{ .Values.enable_l2_announcements | default true }}
+          enabled: {{ $enableL2 }}
         externalIPs:
           enabled: true
         k8sClientRateLimit:
-          qps: {{ .Values.k8s_client_qps | default 15 }}
-          burst: {{ .Values.k8s_client_burst | default 20 }}
+          qps: {{ dig "k8s_client_qps" 15 .Values }}
+          burst: {{ dig "k8s_client_burst" 20 .Values }}

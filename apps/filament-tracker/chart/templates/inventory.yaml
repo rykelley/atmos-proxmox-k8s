@@ -34,6 +34,9 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.inventory.port | quote }}
+            # Homelab has no IPv6 egress; Supabase AAAA answers must not win.
+            - name: NODE_OPTIONS
+              value: "--dns-result-order=ipv4first"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

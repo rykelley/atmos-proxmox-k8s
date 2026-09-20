@@ -56,5 +56,8 @@ loadBalancer:
 
 networkPolicy:
   enabled: true
-  # Supabase pooler port (6543 transaction / 5432 direct-or-session).
-  supabasePort: 6543
+  # Supabase egress ports. Prefer the transaction pooler (6543); 5432 is the
+  # direct/session host (often IPv6-only on free-tier Supabase).
+  supabasePorts:
+    - "6543"
+    - "5432"

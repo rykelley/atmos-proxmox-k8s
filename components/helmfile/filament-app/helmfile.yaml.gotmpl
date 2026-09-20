@@ -37,4 +37,8 @@ releases:
           interface: {{ .Values.gateway_interface | default "eth0" | quote }}
         networkPolicy:
           enabled: {{ .Values.network_policy_enabled | default true }}
-          supabasePort: {{ .Values.supabase_port | default 6543 }}
+          # Allow transaction pooler (6543) and direct/session (5432). Direct
+          # db.*.supabase.co is often IPv6-only — use the pooler hostname.
+          supabasePorts:
+            - "6543"
+            - "5432"

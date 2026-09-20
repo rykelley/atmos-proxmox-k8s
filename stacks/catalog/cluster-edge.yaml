@@ -1,18 +1,12 @@
 # yaml-language-server: $schema=https://atmos.tools/schemas/atmos/atmos-manifest/1.0/atmos-manifest.json
 #
-# Single source of truth for cluster-B ("edge") — the second, CPU-only k3s
-# cluster (aside from its own bare-metal GPU node running vLLM).
-# Imported by stacks/deploy/edge/cluster.yaml (addressed as `-s edge`).
-#
-# Cluster-B lives on a STANDALONE Proxmox host (pve2, API at 10.10.1.82) with its
-# own endpoint/token, and shares NOTHING with the prod cluster except the flat
-# 10.10.1.0/24 LAN. Its VIP (.50) and node IPs (.51-.53) are deliberately clear
-# of cluster-A's VIP (.30), nodes (.31-.37), and LB IPs (.240-.245).
+# Single source of truth for cluster-B ("edge") — the second k3s cluster on
+# standalone Proxmox host pve2 (API at 10.10.1.82), plus bare-metal GPU node
+# k3s-gpu2 (10.10.1.39) for vLLM. Shares the flat 10.10.1.0/24 LAN with prod;
+# node IPs (.51-.56) and LB VIPs (.251/.253) stay clear of hub's ranges.
 #
 # Each cluster is deployed independently with plain atmos + ansible + helmfile
-# (no Argo CD / Kargo). The components here — proxmox-vms (VMs), k3s (HA control
-# plane), cilium (CNI + L2 LoadBalancer), nfs-provisioner, and vllm — are applied
-# with `atmos helmfile apply <component> -s edge`.
+# (no Argo CD / Kargo). Apply with `atmos ... -s edge`.
 
 components:
   terraform:
@@ -32,7 +26,7 @@ components:
         # --- Proxmox (standalone host pve2) ---
         target_node: "pve2"
         template_name: "ubuntu-2404-cloudinit"
-        template_id: 0
+        template_id: 9000
         datastore_id: "local-lvm"
         snippets_datastore_id: "local"
         ci_user: "ubuntu"
@@ -63,10 +57,8 @@ components:
           on_boot: true
           agent: true
 
-        # --- Nodes: mirror cluster-A's VM topology (3 servers + 3 agents,
-        # CPU-only). VMIDs in distinct 83xx (servers) / 84xx (agents) ranges.
-        # cluster-A's 7th node is the bare-metal GPU box, which has no cluster-B
-        # equivalent (only one GPU), so cluster-B stops at these 6 VMs. ---
+        # --- Nodes: 3-server HA + 3 agents (Proxmox VMs). Bare-metal GPU
+        # k3s-gpu2 (10.10.1.39) is NOT here — joined via Ansible inventory. ---
         nodes:
           edge-server-1: { role: "server", ip: "10.10.1.51", vmid: 8301 }
           edge-server-2: { role: "server", ip: "10.10.1.52", vmid: 8302 }
@@ -82,7 +74,7 @@ components:
       settings:
         ansible:
           playbook: site.yml
-          # cluster-B's own inventory (3 edge-server-* hosts).
+          # inventory (3 servers + 3 agents + bare-metal k3s-gpu2).
           inventory: inventory/hosts-edge.yml
         depends_on:
           1:
@@ -164,13 +156,31 @@ components:
         control_plane_endpoint: "10.10.1.51"
         api_port: 6443
         pod_cidr: "10.42.0.0/16"
-        # No Gateway API on cluster-B (no north-south ingress needed), but keep
-        # L2 announcements so the promoted vLLM Service can claim an L2 LB IP.
+        # No Gateway API / Ingress on cluster-B (no north-south UI ingress), but
+        # keep L2 announcements so vLLM can claim an L2 LB IP.
         enable_gateway_api: false
+        enable_ingress_controller: false
         enable_l2_announcements: true
         k8s_client_qps: 15
         k8s_client_burst: 20
         gateway_api_crds_url: "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/experimental-install.yaml"
+
+    gpu-operator:
+      metadata:
+        component: gpu-operator
+      settings:
+        depends_on:
+          1:
+            component: cilium
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s-edge.yaml'
+      vars:
+        gpu_operator_namespace: "gpu-operator"
+        gpu_operator_chart_version: "v26.3.3"
+        gpu_operator_dcgm_enabled: true
+        # Exclusive card on k3s-gpu2 (same as hub).
+        gpu_timeslicing_enabled: false
+        gpu_timeslicing_replicas: 4
 
     # Same NAS export and layout as cluster-A. NOTE: both clusters therefore
     # write into /volume1/NFS under <namespace>/<pvc>, so a PVC with the same
@@ -206,7 +216,7 @@ components:
       settings:
         depends_on:
           1:
-            component: cilium
+            component: gpu-operator
       env:
         KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s-edge.yaml'
       vars:

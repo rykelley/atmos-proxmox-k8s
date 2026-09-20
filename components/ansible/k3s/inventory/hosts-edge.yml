@@ -2,11 +2,11 @@
 #
 # Mirrors inventory/hosts.yml but for the STANDALONE Proxmox host pve2 (API at
 # 10.10.1.82). Mimics cluster-A's VM topology: 3-server HA control plane + 3
-# agents, CPU-only (no GPU node — only one GPU exists, and it's in cluster-A).
+# agents, plus a bare-metal GPU agent (k3s-gpu2) that is NOT a Proxmox VM.
 #
 # IPs here must match the `edge` overrides in stacks/catalog/cluster-edge.yaml
-# (API endpoint 10.10.1.51, servers .51/.52/.53, agents .54/.55/.56). site.yml drives
-# play targeting off these groups.
+# (API endpoint 10.10.1.51, servers .51/.52/.53, agents .54/.55/.56, GPU .39).
+# site.yml drives play targeting off these groups.
 all:
   vars:
     ansible_user: ubuntu
@@ -25,8 +25,6 @@ all:
             edge-server-3:
               ansible_host: 10.10.1.53
               k3s_node_ip: 10.10.1.53
-        # 3 agents (mirrors cluster-A). No GPU node on cluster-B, so the k3s_gpu
-        # play in site.yml matches no hosts here and is skipped.
         k3s_agents:
           hosts:
             edge-agent-1:
@@ -38,3 +36,17 @@ all:
             edge-agent-3:
               ansible_host: 10.10.1.56
               k3s_node_ip: 10.10.1.56
+          children:
+            # Bare-metal GPU agent (NOT a Proxmox VM). Tainted so only GPU
+            # workloads schedule here; GPU Operator operands tolerate the taint.
+            k3s_gpu:
+              hosts:
+                k3s-gpu-2:
+                  ansible_host: 10.10.1.39
+                  k3s_node_ip: 10.10.1.39
+                  ansible_user: rykelley
+                  is_vm: false
+                  k3s_node_labels:
+                    - "nvidia.com/gpu.present=true"
+                  k3s_node_taints:
+                    - "nvidia.com/gpu=present:NoSchedule"

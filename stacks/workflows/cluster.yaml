@@ -117,7 +117,7 @@ workflows:
         command: terraform plan proxmox-vms -s prod
 
   deploy-cluster-b:
-    description: "Provision cluster-B (edge) on the standalone Proxmox host pve2 (10.10.1.82): 3-server HA k3s (API on first server 10.10.1.51), then Cilium. CPU-only control plane (its GPU node runs vLLM separately). Requires PROXMOX_VE_B_* in .env and the ubuntu-2404-cloudinit template on pve2 (see scripts/create-ubuntu-template.sh)."
+    description: "Provision cluster-B (edge) on the standalone Proxmox host pve2 (10.10.1.82): 3-server HA k3s (API on first server 10.10.1.51), then Cilium. GPU node k3s-gpu2 is joined via setup-gpu-os-b / deploy-gpu-b. Requires PROXMOX_VE_B_* in .env and template VMID 9000 on pve2."
     steps:
       - name: provision-vms
         command: terraform apply proxmox-vms -s edge -auto-approve
@@ -130,6 +130,22 @@ workflows:
         command: ansible playbook k3s -s edge
       - name: deploy-cilium
         command: helmfile apply cilium -s edge
+
+  setup-gpu-os-b:
+    description: "Bare-metal edge GPU host (k3s-gpu2) bring-up via Ansible: OS prep, NVIDIA toolkit, join as tainted agent on cluster-B."
+    steps:
+      - name: prepare-gpu-host
+        command: ansible playbook k3s -s edge -- --limit k3s_gpu
+
+  deploy-gpu-b:
+    description: "Join k3s-gpu2, install the NVIDIA GPU Operator on edge, then deploy vLLM (VIP 10.10.1.253)."
+    steps:
+      - name: join-gpu-node
+        command: ansible playbook k3s -s edge
+      - name: deploy-gpu-operator
+        command: helmfile apply gpu-operator -s edge -- --skip-diff-on-install
+      - name: deploy-vllm
+        command: helmfile apply vllm -s edge -- --skip-diff-on-install
 
   destroy-cluster-b:
     description: "Tear down cluster-B (removes the pve2 VMs)."

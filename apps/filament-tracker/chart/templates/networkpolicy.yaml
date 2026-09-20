@@ -77,13 +77,15 @@ spec:
         - ports:
             - port: "53"
               protocol: ANY
-    # Supabase Postgres (external).
+    # Supabase Postgres (external). Prefer pooler :6543; allow :5432 too.
     - toEntities:
         - world
       toPorts:
         - ports:
-            - port: "{{ .Values.networkPolicy.supabasePort }}"
+            {{- range (.Values.networkPolicy.supabasePorts | default (list "6543" "5432")) }}
+            - port: {{ . | quote }}
               protocol: TCP
+            {{- end }}
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -91,7 +93,7 @@ metadata:
   name: inventory-service
   namespace: {{ .Values.namespace }}
   labels:
-    {{- include "ft.labels" (dict "name" "inventory-netpol" "component" "networking" "root" $) | nindent 4 }}
+    {{- include "ft.labels" (dict "name" "inventory-service" "component" "networking" "root" $) | nindent 4 }}
 spec:
   endpointSelector:
     matchLabels:
@@ -124,6 +126,8 @@ spec:
         - world
       toPorts:
         - ports:
-            - port: "{{ .Values.networkPolicy.supabasePort }}"
+            {{- range (.Values.networkPolicy.supabasePorts | default (list "6543" "5432")) }}
+            - port: {{ . | quote }}
               protocol: TCP
+            {{- end }}
 {{- end }}
