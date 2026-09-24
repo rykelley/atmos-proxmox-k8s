@@ -1,0 +1,52 @@
+# Garage S3-compatible object store (single-node) on the hub cluster.
+# LAN endpoint: http://<garage_lb_ip>:3900  (Cilium L2 VIP)
+#
+# Prerequisite: nfs-client StorageClass (nfs-provisioner). The presync hook
+# creates Secret garage-secrets (rpc/admin) and Secret garage-config (full
+# garage.toml). After first apply, run scripts/garage-bootstrap.sh once.
+
+{{- $ns := dig "garage_namespace" "garage" .Values }}
+{{- $lbIP := dig "garage_lb_ip" "10.10.1.247" .Values }}
+{{- $region := dig "garage_s3_region" "garage" .Values }}
+{{- $rootDomain := dig "garage_root_domain" ".s3.lan" .Values }}
+{{- $replication := dig "garage_replication_factor" 1 .Values }}
+
+releases:
+  - name: garage
+    namespace: {{ $ns }}
+    chart: ../../../apps/garage/chart
+    createNamespace: true
+    wait: false
+    timeout: 300
+    hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: bash
+        args:
+          - -c
+          - >-
+            GARAGE_NAMESPACE={{ $ns | quote }}
+            GARAGE_REPLICATION_FACTOR={{ $replication | quote }}
+            GARAGE_S3_REGION={{ $region | quote }}
+            GARAGE_ROOT_DOMAIN={{ $rootDomain | quote }}
+            bash ../../../scripts/garage-render-config.sh
+    values:
+      - namespace: {{ $ns | quote }}
+        image:
+          repository: dxflrs/garage
+          tag: {{ dig "garage_image_tag" "v2.0.0" .Values | quote }}
+          pullPolicy: IfNotPresent
+        replicaCount: 1
+        replicationFactor: {{ $replication }}
+        s3Region: {{ $region | quote }}
+        rootDomain: {{ $rootDomain | quote }}
+        persistence:
+          storageClass: {{ dig "garage_storage_class" "nfs-client" .Values | quote }}
+          metaSize: {{ dig "garage_meta_size" "1Gi" .Values | quote }}
+          dataSize: {{ dig "garage_data_size" "50Gi" .Values | quote }}
+        loadBalancer:
+          poolName: garage-s3-lb-pool
+          ip: {{ $lbIP | quote }}
+          interface: {{ dig "garage_lb_interface" "(eth0|eno1)" .Values | quote }}
+        secrets:
+          config: garage-secrets

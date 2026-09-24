@@ -1,0 +1,23 @@
+---
+description: Short Order homelab context (MLflow, KServe, vLLM on k3s)
+alwaysApply: true
+---
+# Short Order homelab
+
+Two independent k3s clusters, each with one NVIDIA RTX PRO 2000 Blackwell (16 GB-class) GPU node.
+- kube context `[k3s-1]` = primary learning cluster. Phases 0–5 happen here.
+- kube context `[k3s-2]` = clean cluster reserved for Phase 6 (LLMInferenceService). Do not touch it before Phase 6.
+- CNI is Cilium. Ingress is via Gateway API; the GatewayClass is `[gatewayclass-name]`.
+- Object storage: S3-compatible at `[https://minio.lab.example]`, bucket `short-order`. Credentials live in the Secret `s3-creds` in each namespace, never in git.
+- Prometheus + Grafana already run in namespace `[monitoring]` (kube-prometheus-stack). Use ServiceMonitors.
+- Lab DNS suffix: `[lab.example]`. MLflow will be at `https://mlflow.[lab.example]`.
+- Hugging Face models are cached on a PVC named `models` in namespace `models` (RWX, `[storageclass]`).
+
+Conventions:
+- Repo layout: one folder per phase (`phase-0/` … `phase-6/`), each with a README that states the goal and the "done when" proof.
+- Prefer Helm + a `values.yaml` in git over kubectl imperatives. Pin every chart and image version; never use `latest`.
+- Python: `uv` venvs, `pyproject.toml` per phase, pin `mlflow` to the same version as the server.
+- Before any `kubectl apply` or `helm install`, print the exact command and the target context and wait for my OK.
+- Never delete a namespace, PVC, or CRD without asking.
+- When something fails, show me the logs you looked at before proposing a fix.
+- Small models only: Qwen2.5-0.5B-Instruct and Qwen2.5-1.5B-Instruct for learning; a 7B/8B AWQ or FP8 quant is the ceiling.

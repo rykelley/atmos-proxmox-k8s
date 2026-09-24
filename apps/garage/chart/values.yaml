@@ -1,0 +1,39 @@
+namespace: garage
+
+image:
+  repository: dxflrs/garage
+  tag: "v2.0.0"
+  pullPolicy: IfNotPresent
+
+# Single-node layout (no multi-node RPC mesh). Good enough for a homelab S3
+# endpoint; bump replicaCount / replicationFactor only with a real multi-node plan.
+replicaCount: 1
+replicationFactor: 1
+s3Region: garage
+rootDomain: ".s3.lan"
+
+persistence:
+  storageClass: nfs-client
+  metaSize: 1Gi
+  dataSize: 50Gi
+
+# Dedicated Cilium L2 VIP for the S3 API (port 3900). Ping-check before changing.
+loadBalancer:
+  poolName: garage-s3-lb-pool
+  ip: "10.10.1.247"
+  interface: "(eth0|eno1)"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+# Names of Secrets created out-of-band / by helmfile hooks (never committed).
+secrets:
+  # Opaque secret with keys: rpc-secret (hex32), admin-token (base64-ish string)
+  config: garage-secrets
+  # Optional: if set, helmfile/post steps can create default key + bucket.
+  # Access keys for apps live in per-namespace `s3-creds` Secrets (not here).

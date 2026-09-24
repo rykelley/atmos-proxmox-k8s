@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: garage
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "garage.labels" (dict "name" "garage" "component" "storage") | nindent 4 }}
+spec:
+  serviceName: garage
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "garage.selectorLabels" (dict "name" "garage") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "garage.labels" (dict "name" "garage" "component" "storage") | nindent 8 }}
+    spec:
+      # Garage image expects to run as root in the published container; NFS
+      # exports here are mode 0777 so root_squash is fine for meta/data.
+      containers:
+        - name: garage
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/garage", "server"]
+          env:
+            - name: GARAGE_CONFIG_FILE
+              value: /etc/garage/garage.toml
+            # Secret volumes are often group/world readable; Garage otherwise
+            # fails with: IO error: Permission denied (os error 13).
+            - name: GARAGE_ALLOW_WORLD_READABLE_SECRETS
+              value: "true"
+          ports:
+            - name: s3
+              containerPort: 3900
+            - name: rpc
+              containerPort: 3901
+            - name: admin
+              containerPort: 3903
+          volumeMounts:
+            - name: config
+              mountPath: /etc/garage
+              readOnly: true
+            - name: meta
+              mountPath: /var/lib/garage/meta
+            - name: data
+              mountPath: /var/lib/garage/data
+          readinessProbe:
+            tcpSocket:
+              port: s3
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: s3
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          secret:
+            secretName: garage-config
+            defaultMode: 0400
+  volumeClaimTemplates:
+    - metadata:
+        name: meta
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.persistence.storageClass | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.metaSize | quote }}
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.persistence.storageClass | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.dataSize | quote }}

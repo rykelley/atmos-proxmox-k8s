@@ -1,0 +1,6 @@
+apiVersion: v2
+name: garage
+description: Single-node Garage S3-compatible object store with Cilium L2 LoadBalancer.
+type: application
+version: 0.1.0
+appVersion: "v2.0.0"

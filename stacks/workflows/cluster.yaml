@@ -76,9 +76,18 @@ workflows:
         # same apply.
         command: helmfile apply monitoring -s prod -- --skip-diff-on-install
 
+  deploy-garage:
+    description: "Deploy single-node Garage S3 on the hub cluster (VIP 10.10.1.247:3900). Requires nfs-client. After apply, run scripts/garage-bootstrap.sh once."
+    steps:
+      - name: deploy-garage
+        command: helmfile apply garage -s prod -- --skip-diff-on-install
+
   destroy-cluster:
     description: "Tear down the cluster in reverse order (removes the VMs)."
     steps:
+      - name: destroy-garage
+        command: helmfile destroy garage -s prod
+        # Best-effort: the cluster may already be gone.
       - name: destroy-monitoring
         command: helmfile destroy monitoring -s prod
         # Best-effort: the cluster may already be gone.

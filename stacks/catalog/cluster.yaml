@@ -344,6 +344,29 @@ components:
         nfs_storage_class_default: true
         nfs_archive_on_delete: false
 
+    # Single-node Garage (S3-compatible). LAN VIP 10.10.1.247:3900.
+    # After apply: ./scripts/garage-bootstrap.sh  (layout + short-order bucket).
+    garage:
+      metadata:
+        component: garage
+      settings:
+        depends_on:
+          1:
+            component: nfs-provisioner
+      env:
+        KUBECONFIG: '{{ env "HOME" }}/.kube/atmos-k3s.yaml'
+      vars:
+        garage_namespace: "garage"
+        garage_image_tag: "v2.0.0"
+        garage_replication_factor: 1
+        garage_s3_region: "garage"
+        garage_root_domain: ".s3.lan"
+        garage_storage_class: "nfs-client"
+        garage_meta_size: "1Gi"
+        garage_data_size: "50Gi"
+        garage_lb_ip: "10.10.1.247"
+        garage_lb_interface: "(eth0|eno1)"
+
     kyverno:
       metadata:
         component: kyverno

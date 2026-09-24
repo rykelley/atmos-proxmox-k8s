@@ -1,0 +1,39 @@
+# Phase 0 — prove the GPU is schedulable
+#
+# Goal: a one-shot Pod requests nvidia.com/gpu: 1, lands on k3s-gpu1, runs
+# nvidia-smi, and exits 0.
+#
+# Done when:
+#   kubectl --context k3s-1 logs gpu-check
+# shows the RTX PRO 2000 (Blackwell) in the nvidia-smi table.
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-check
+  namespace: default
+  labels:
+    app.kubernetes.io/name: gpu-check
+    app.kubernetes.io/part-of: short-order
+    short-order.phase: "0"
+spec:
+  restartPolicy: Never
+  # k3s + host nvidia-container-toolkit: the RuntimeClass named "nvidia"
+  # selects the nvidia containerd runtime so /dev/nvidia* is injected.
+  runtimeClassName: nvidia
+  # k3s-gpu1 is tainted nvidia.com/gpu=present:NoSchedule so only GPU
+  # workloads land there. Match that taint (same pattern as vLLM).
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  containers:
+    - name: cuda-smi
+      image: nvidia/cuda:12.8.0-base-ubuntu24.04
+      imagePullPolicy: IfNotPresent
+      command: ["nvidia-smi"]
+      resources:
+        limits:
+          # Extended resource advertised by the NVIDIA device plugin.
+          # Scheduler only places this Pod where free nvidia.com/gpu >= 1.
+          nvidia.com/gpu: "1"
